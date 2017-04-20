@@ -71,3 +71,10 @@ deploy:
   type: git
   branch: gh-pages
   repository: git@github.com:kee-life/blog.git
+
+feed:
+  type: atom
+  path: atom.xml
+  limit: 20
+  hub:
+  content:
