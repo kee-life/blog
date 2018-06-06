@@ -2,7 +2,7 @@
 title: Hello World
 date: 2017-02-19 21:21:07
 categories:
-  - Coding Skill
+  - coding
 tags:
   - hexo
 ---

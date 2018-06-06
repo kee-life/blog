@@ -2,7 +2,7 @@
 title: storm compile & install
 date: 2017-04-19 21:21:11
 categories:
-  - Storm
+  - storm
 tags:
   - storm
 ---

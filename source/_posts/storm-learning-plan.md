@@ -2,7 +2,7 @@
 title: storm learning plan
 date: 2017-04-19 21:21:07
 categories:
-  - Storm
+  - storm
 tags:
   - storm
 ---
