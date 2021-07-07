@@ -1,54 +1,234 @@
-extends base
-
-block title
-  title= page.title + ' | ' + config.title
-
-block content
-  .post
-    h1.post-title= page.title
-    .post-meta= page.date.format(config.date_format)
-      if page.categories.length > 0
-        span= ' | '
-        span.category
-          for category in page.categories.toArray()
-            a(href=url_for(category.path))= category.name
-      if theme.busuanzi == true
-        script(src='https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js', async)
-        span#busuanzi_container_page_pv= ' | '
-          span#busuanzi_value_page_pv
-          span= ' ' + __('Hits')
-      if theme.wordcount == true
-        include _partial/wordcount.pug
-    if theme.disqus.enable == true
-      a.disqus-comment-count(data-disqus-identifier=page.path, href=url_for(page.path) + '#disqus_thread')
-    if theme.changyan
-      a.ds-thread-count(href=url_for(page.path) + '#SOHUCS')
-        span#changyan_count_unit(style='font-size: 15px; color: #6E7173;') 0
-        span= ' ' + __('Comment')
-      script(src='https://assets.changyan.sohu.com/upload/plugins/plugins.count.js', async)
-    if theme.valine.enable
-      a.disqus-comment-count( href=url_for(page.path) + '#vcomment')
-        span.valine-comment-count(data-xid=url_for(page.path))
-        span= ' ' + __('Comment')
-    if page.toc
-      div(class='clear')
-        div(id='toc' class='toc-article')
-          div(class='toc-title')= __('contents')
-          != toc(page.content, {list_number: theme.toc_number})
-    .post-content
-      != page.content
-    if theme.donate.enable == true && page.donate != false
-      include _widget/donate.pug
-
-    if theme.post_copyright.enable == true && page.copyright != false
-      include _widget/copyright.pug
-
-    if theme.shareto == true
-      script(type='text/javascript', src=url_for(theme.js) + '/share.js' + '?v=' + theme.version, async)
-      a.article-share-link(data-url=page.permalink, data-id=page._id, data-qrcode=qrcode(page.permalink))= __('shareto')
-
-    include _partial/tag.pug
-    include _partial/post_nav.pug
-
-    if page.comments
-      include _partial/comments.pug
+<!DOCTYPE html><html lang="en"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description"><title>jstorm-crawler | Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=1.0.0"><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/normalize.css/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/purecss/build/pure-min.min.css"><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/purecss/build/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.jsdelivr.net/npm/jquery/dist/jquery.min.js"></script><link rel="icon" mask="" sizes="any" href="/favicon.ico"><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"><link rel="alternate" type="application/atom+xml" href="/atom.xml"><script type="text/javascript" src="//cdn.jsdelivr.net/npm/clipboard/dist/clipboard.min.js"></script><script type="text/javascript" src="//cdn.jsdelivr.net/gh/codeseven/toastr/build/toastr.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/gh/codeseven/toastr/build/toastr.min.css"><meta name="generator" content="Hexo 5.4.0"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">jstorm-crawler</h1><a id="logo" href="/.">Blog</a><p class="description">elmer's personal blog</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> Home</i></a><a href="/archives/"><i class="fa fa-archive"> Archive</i></a><a href="/about/"><i class="fa fa-user"> About</i></a><a href="/atom.xml"><i class="fa fa-rss"> RSS</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">jstorm-crawler</h1><div class="post-meta">2017-04-25<span> | </span><span class="category"><a href="/categories/jstorm/">jstorm</a></span></div><div class="post-content"><h3 id="Config"><a href="#Config" class="headerlink" title="Config"></a>Config</h3><p>jstorm-crawler configuration parameters<br>:smile: :laughing:</p>
+<table>
+<thead>
+<tr>
+<th align="left">配置项</th>
+<th align="left">默认值</th>
+<th align="left">使用类</th>
+<th align="left">描述</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">fetcher.threads.per.queue</td>
+<td align="left">1</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">每个爬取url队列并发线程数</td>
+</tr>
+<tr>
+<td align="left">fetcher.queue.mode</td>
+<td align="left">“byHost” (“byDomain”, “byIP”)</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">按照什么规则来区分队列</td>
+</tr>
+<tr>
+<td align="left">fetcher.server.delay</td>
+<td align="left">1.0f</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">取url延时</td>
+</tr>
+<tr>
+<td align="left">fetcher.server.min.delay</td>
+<td align="left">0.0f</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">去url最小延时（当线程数&gt;1,使用此延时)</td>
+</tr>
+<tr>
+<td align="left">fetcher.maxThreads.${id}</td>
+<td align="left">1</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">定制化的某个id最大并发线程数</td>
+</tr>
+<tr>
+<td align="left">fetcher.max.crawl.delay</td>
+<td align="left">30</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">最大延时</td>
+</tr>
+<tr>
+<td align="left">fetcher.metrics.time.bucket.secs</td>
+<td align="left">10</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">间隔几秒，输出一次Metric信息</td>
+</tr>
+<tr>
+<td align="left">fetcherbolt.queue.debug.filepath</td>
+<td align="left"></td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">queue内容输出文件路径</td>
+</tr>
+<tr>
+<td align="left">fetcher.threads.number</td>
+<td align="left">10</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">爬取并发线程数</td>
+</tr>
+<tr>
+<td align="left">sitemap.discovery</td>
+<td align="left">false</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">是否取sitemap中信息</td>
+</tr>
+<tr>
+<td align="left">fetcher.max.urls.in.queues</td>
+<td align="left">-1</td>
+<td align="left">FeatcherBolt.java</td>
+<td align="left">url队列中最大url数</td>
+</tr>
+<tr>
+<td align="left">sitemap.sniffContent</td>
+<td align="left">false</td>
+<td align="left">SiteMapParserBolt.java</td>
+<td align="left">如果metaData里无isSiteMap=true,还是否解析</td>
+</tr>
+<tr>
+<td align="left">sitemap.filter.hours.since.modified</td>
+<td align="left">-1</td>
+<td align="left">SiteMapParserBolt.java</td>
+<td align="left">过滤掉Last-Modified是几个小时之前的sitemap</td>
+</tr>
+<tr>
+<td align="left">sitemap.offset.guess</td>
+<td align="left">300</td>
+<td align="left">SiteMapParserBolt.java</td>
+<td align="left">从网页内容猜测该url是否是sitemap的最大字数</td>
+</tr>
+<tr>
+<td align="left">parser.emitOutlinks</td>
+<td align="left">true</td>
+<td align="left"></td>
+<td align="left"></td>
+</tr>
+<tr>
+<td align="left">track.anchors</td>
+<td align="left">true</td>
+<td align="left"></td>
+<td align="left"></td>
+</tr>
+<tr>
+<td align="left">robots.noFollow.strict</td>
+<td align="left">true</td>
+<td align="left"></td>
+<td align="left">是否严格遵守robots.txt 中noFollow指示</td>
+</tr>
+<tr>
+<td align="left">jsoup.treat.non.html.as.error</td>
+<td align="left">true</td>
+<td align="left"></td>
+<td align="left"></td>
+</tr>
+<tr>
+<td align="left">detect.mimetype</td>
+<td align="left">true</td>
+<td align="left"></td>
+<td align="left"></td>
+</tr>
+<tr>
+<td align="left">detect.charset.maxlength</td>
+<td align="left">-1</td>
+<td align="left"></td>
+<td align="left"></td>
+</tr>
+<tr>
+<td align="left">parsefilters.config.file</td>
+<td align="left"></td>
+<td align="left">ParseFilters.java</td>
+<td align="left">页面抽取配置文件</td>
+</tr>
+<tr>
+<td align="left">http.skip.robots</td>
+<td align="left">false</td>
+<td align="left">AbstractHttpProtocol.java</td>
+<td align="left">是否忽略robots.txt</td>
+</tr>
+<tr>
+<td align="left">http.store.headers</td>
+<td align="left">false</td>
+<td align="left">AbstractHttpProtocol.java</td>
+<td align="left">是否存储头部</td>
+</tr>
+<tr>
+<td align="left">http.use.cookies</td>
+<td align="left">false</td>
+<td align="left">AbstractHttpProtocol.java</td>
+<td align="left">是否使用cookies</td>
+</tr>
+<tr>
+<td align="left">fetcher.threads.number</td>
+<td align="left">200</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">并发线程</td>
+</tr>
+<tr>
+<td align="left">http.content.limit</td>
+<td align="left">-1</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">下载大小限制</td>
+</tr>
+<tr>
+<td align="left">http.timeout</td>
+<td align="left">10000</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">下载超时时间</td>
+</tr>
+<tr>
+<td align="left">http.proxy.host</td>
+<td align="left">null</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">代理地址</td>
+</tr>
+<tr>
+<td align="left">http.proxy.port</td>
+<td align="left">8080</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">代理端口</td>
+</tr>
+<tr>
+<td align="left">http.proxy.user</td>
+<td align="left">null</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">代理用户名</td>
+</tr>
+<tr>
+<td align="left">http.proxy.pass</td>
+<td align="left">null</td>
+<td align="left">HttpProtocol.java</td>
+<td align="left">代理用户密码</td>
+</tr>
+<tr>
+<td align="left">parser.emitOutlinks</td>
+<td align="left">true</td>
+<td align="left">JSoupParserBolt.java</td>
+<td align="left">是否处理外链</td>
+</tr>
+<tr>
+<td align="left">track.anchors</td>
+<td align="left">true</td>
+<td align="left">JSoupParserBolt.java</td>
+<td align="left">是否跟踪锚点</td>
+</tr>
+<tr>
+<td align="left">robots.noFollow.strict</td>
+<td align="left">true</td>
+<td align="left">JSoupParserBolt.java</td>
+<td align="left">是否严格执行robots.txt noFollow规则</td>
+</tr>
+<tr>
+<td align="left">jsoup.treat.non.html.as.error</td>
+<td align="left">true</td>
+<td align="left">JSoupParserBolt.java</td>
+<td align="left">非html文档是否当成错误</td>
+</tr>
+<tr>
+<td align="left">detect.mimetype</td>
+<td align="left">true</td>
+<td align="left">JSoupParserBolt.java</td>
+<td align="left">是否检测mimetype</td>
+</tr>
+<tr>
+<td align="left">detect.charset.maxLength</td>
+<td align="left">-1</td>
+<td align="left">JSoupParserBolt.java</td>
+<td align="left">最长检测字符数</td>
+</tr>
+</tbody></table>
+</div><div class="tags"><a href="/tags/storm/"><i class="fa fa-tag"></i>storm</a></div><div class="post-nav"><a class="pre" href="/networking/gather-and-analyze-packet-traces-for-macOS/">gather and analyze packet traces for macOS</a><a class="next" href="/jstorm/storm-compile-install/">storm compile &amp; install</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="https://blog.elmle.cn"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> Categories</i></div><ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/coding/">coding</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/jstorm/">jstorm</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/">k8s</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/kubernetes/">kubernetes</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/minikube/">minikube</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/minikube/kubernetes/">kubernetes</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/minikube/kubernetes/istio/">istio</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/minikube/kubernetes/istio/sofa-mesh/">sofa-mesh</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/k8s/minikube/kubernetes/istio/sofa-mesh/sofa-mosn/">sofa-mosn</a></li></ul></li></ul></li></ul></li></ul></li></ul></li><li class="category-list-item"><a class="category-list-link" href="/categories/networking/">networking</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> Tags</i></div><div class="tagcloud"><a href="/tags/git/" style="font-size: 15px;">git</a> <a href="/tags/hexo/" style="font-size: 15px;">hexo</a> <a href="/tags/storm/" style="font-size: 15px;">storm</a> <a href="/tags/k8s/" style="font-size: 15px;">k8s</a> <a href="/tags/minikube/" style="font-size: 15px;">minikube</a> <a href="/tags/kubernetes/" style="font-size: 15px;">kubernetes</a> <a href="/tags/istio/" style="font-size: 15px;">istio</a> <a href="/tags/sofa-mesh/" style="font-size: 15px;">sofa-mesh</a> <a href="/tags/sofa-mosn/" style="font-size: 15px;">sofa-mosn</a> <a href="/tags/vim/" style="font-size: 15px;">vim</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> Recent</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/uncategorized/zsh-configuration/">zsh-configuration</a></li><li class="post-list-item"><a class="post-list-link" href="/coding/gitlab-docker-setup/">setup a gitlab code repository with docker</a></li><li class="post-list-item"><a class="post-list-link" href="/k8s/minikube/kubernetes/istio/sofa-mesh/sofa-mosn/prepare-istio-env/">prepare a devlopment environment for istio</a></li><li class="post-list-item"><a class="post-list-link" href="/k8s/kubernetes/talk-about-kuberlete-1/">talk about kuberlete</a></li><li class="post-list-item"><a class="post-list-link" href="/k8s/minikube/minikube-env-preparatioin/">prepare a minikube environment</a></li><li class="post-list-item"><a class="post-list-link" href="/coding/configuring-a-remote-repository-for-a-fork/">configuring a remote repository for a fork</a></li><li class="post-list-item"><a class="post-list-link" href="/coding/vim-configuration/">vim configuration</a></li><li class="post-list-item"><a class="post-list-link" href="/networking/gather-and-analyze-packet-traces-for-macOS/">gather and analyze packet traces for macOS</a></li><li class="post-list-item"><a class="post-list-link" href="/jstorm/jstorm-crawler/">jstorm-crawler</a></li><li class="post-list-item"><a class="post-list-link" href="/jstorm/storm-compile-install/">storm compile & install</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> Links</i></div><ul></ul><a href="http://www.example1.com/" title="site-name1" target="_blank">site-name1</a><ul></ul><a href="http://www.example2.com/" title="site-name2" target="_blank">site-name2</a><ul></ul><a href="http://www.example3.com/" title="site-name3" target="_blank">site-name3</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"><div id="footer">Copyright © 2021 <a href="/." rel="nofollow">Blog.</a> Powered by<a rel="nofollow" target="_blank" href="https://hexo.io"> Hexo.</a><a rel="nofollow" target="_blank" href="https://github.com/tufu9441/maupassant-hexo"> Theme</a> by<a rel="nofollow" target="_blank" href="https://github.com/pagecho"> Cho.</a></div></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=1.0.0" async></script><script type="text/javascript" src="//cdn.jsdelivr.net/gh/fancyapps/fancybox/dist/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=1.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox/dist/jquery.fancybox.min.css"><script type="text/javascript" src="/js/copycode.js" successtext="Copy Successed!"></script><link rel="stylesheet" type="text/css" href="/css/copycode.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=1.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=1.0.0"></script></div></body></html>
