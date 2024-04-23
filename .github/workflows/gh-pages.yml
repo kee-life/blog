@@ -31,11 +31,7 @@ jobs:
         with:
             go-version: "1.17"
             check-latest: true
-            cache-dependency-path: |
-              go.sum
-
-      - name: Download go module
-        run: go mod download
+      - run: go version
 
       - name: Cache Go Modules
         uses: actions/cache@v2
