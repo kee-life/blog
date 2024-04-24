@@ -1,0 +1,761 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Istio on Personal blog</title><link>https://blog.elmle.cn/tags/istio/</link><description>Recent content in Istio on Personal blog</description><generator>Hugo -- gohugo.io</generator><language>en</language><lastBuildDate>Fri, 06 Jan 2023 11:34:00 +0000</lastBuildDate><atom:link href="https://blog.elmle.cn/tags/istio/index.xml" rel="self" type="application/rss+xml"/><item><title>Dubbo demo using Istio</title><link>https://blog.elmle.cn/posts/dubbo-mesh/</link><pubDate>Fri, 06 Jan 2023 11:34:00 +0000</pubDate><guid>https://blog.elmle.cn/posts/dubbo-mesh/</guid><description>&lt;img src="https://blog.elmle.cn/posts/dubbo-mesh/cover.jpeg" alt="Featured image of post Dubbo demo using Istio" />&lt;p>可以按照下文步骤，将 Demo 部署到本地集群。&lt;/p>
+&lt;h2 id="总体目标">
+&lt;a href="#%e6%80%bb%e4%bd%93%e7%9b%ae%e6%a0%87">#&lt;/a>
+总体目标
+&lt;/h2>&lt;ul>
+&lt;li>部署 Dubbo 应用到 Kubernetes&lt;/li>
+&lt;li>Istio 自动注入 Envoy 并实现流量拦截&lt;/li>
+&lt;li>基于 Istio 规则进行流量治理&lt;/li>
+&lt;/ul>
+&lt;h2 id="基本流程与工作原理">
+&lt;a href="#%e5%9f%ba%e6%9c%ac%e6%b5%81%e7%a8%8b%e4%b8%8e%e5%b7%a5%e4%bd%9c%e5%8e%9f%e7%90%86">#&lt;/a>
+基本流程与工作原理
+&lt;/h2>&lt;p>这个示例演示了如何将 Dubbo 开发的应用部署在 Istio 体系下，以实现 Envoy 对 Dubbo 服务的自动代理，示例总体架构如下图所示。&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/dubbo-mesh/assets/thinsdk.png"
+width="243"
+height="204"
+srcset="https://blog.elmle.cn/posts/dubbo-mesh/assets/thinsdk_huc6778007af8d55e55051f43369fa1c20_7418_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/dubbo-mesh/assets/thinsdk_huc6778007af8d55e55051f43369fa1c20_7418_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="119"
+data-flex-basis="285px"
+>&lt;/p>
+&lt;p>完成示例将需要的步骤如下：&lt;/p>
+&lt;ol>
+&lt;li>创建一个 Dubbo 应用( &lt;a class="link" href="https://github.com/apache/dubbo-samples/tree/master/dubbo-samples-mesh-k8s" target="_blank" rel="noopener"
+>dubbo-samples-mesh-k8s&lt;/a> )&lt;/li>
+&lt;li>构建容器镜像并推送到镜像仓库（ &lt;a class="link" href="https://hub.docker.com/u/dubboteam" target="_blank" rel="noopener"
+>本示例官方镜像&lt;/a> ）&lt;/li>
+&lt;li>分别部署 Dubbo Provider 与 Dubbo Consumer 到 Kubernetes 并验证 Envoy 代理注入成功&lt;/li>
+&lt;li>验证 Envoy 发现服务地址、正常拦截 RPC 流量并实现负载均衡&lt;/li>
+&lt;li>优化并配置健康检查流程&lt;/li>
+&lt;/ol>
+&lt;h2 id="详细步骤">
+&lt;a href="#%e8%af%a6%e7%bb%86%e6%ad%a5%e9%aa%a4">#&lt;/a>
+详细步骤
+&lt;/h2>&lt;h3 id="环境要求">
+&lt;a href="#%e7%8e%af%e5%a2%83%e8%a6%81%e6%b1%82">#&lt;/a>
+环境要求
+&lt;/h3>&lt;p>请确保本地安装如下环境，以提供容器运行时、Kubernetes集群及访问工具&lt;/p>
+&lt;ul>
+&lt;li>&lt;a class="link" href="https://www.docker.com/get-started/" target="_blank" rel="noopener"
+>Docker&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://minikube.sigs.k8s.io/docs/start/" target="_blank" rel="noopener"
+>Minikube&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://kubernetes.io/docs/tasks/tools/" target="_blank" rel="noopener"
+>Kubectl&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://istio.io/latest/docs/setup/getting-started/" target="_blank" rel="noopener"
+>Istio&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://github.com/ahmetb/kubectx" target="_blank" rel="noopener"
+>Kubens(optional)&lt;/a>&lt;/li>
+&lt;/ul>
+&lt;p>通过以下命令启动本地 Kubernetes 集群&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">minikube start
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>通过 kubectl 检查集群正常运行，且 kubectl 绑定到默认本地集群&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl cluster-info
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="前置条件">
+&lt;a href="#%e5%89%8d%e7%bd%ae%e6%9d%a1%e4%bb%b6">#&lt;/a>
+前置条件
+&lt;/h3>&lt;p>通过以下命令为示例项目创建独立的 Namespace &lt;code>dubbo-demo&lt;/code>，同时开启 sidecar 自动注入。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 初始化命名空间并开启sidecar自动注入&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Namespace
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> labels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> istio-injection: enabled
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 切换命名空间&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubens dubbo-demo
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="部署到-kubernetes">
+&lt;a href="#%e9%83%a8%e7%bd%b2%e5%88%b0-kubernetes">#&lt;/a>
+部署到 Kubernetes
+&lt;/h3>&lt;h4 id="部署-provider">
+&lt;a href="#%e9%83%a8%e7%bd%b2-provider">#&lt;/a>
+部署 Provider
+&lt;/h4>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;span class="lnt">30
+&lt;/span>&lt;span class="lnt">31
+&lt;/span>&lt;span class="lnt">32
+&lt;/span>&lt;span class="lnt">33
+&lt;/span>&lt;span class="lnt">34
+&lt;/span>&lt;span class="lnt">35
+&lt;/span>&lt;span class="lnt">36
+&lt;/span>&lt;span class="lnt">37
+&lt;/span>&lt;span class="lnt">38
+&lt;/span>&lt;span class="lnt">39
+&lt;/span>&lt;span class="lnt">40
+&lt;/span>&lt;span class="lnt">41
+&lt;/span>&lt;span class="lnt">42
+&lt;/span>&lt;span class="lnt">43
+&lt;/span>&lt;span class="lnt">44
+&lt;/span>&lt;span class="lnt">45
+&lt;/span>&lt;span class="lnt">46
+&lt;/span>&lt;span class="lnt">47
+&lt;/span>&lt;span class="lnt">48
+&lt;/span>&lt;span class="lnt">49
+&lt;/span>&lt;span class="lnt">50
+&lt;/span>&lt;span class="lnt">51
+&lt;/span>&lt;span class="lnt">52
+&lt;/span>&lt;span class="lnt">53
+&lt;/span>&lt;span class="lnt">54
+&lt;/span>&lt;span class="lnt">55
+&lt;/span>&lt;span class="lnt">56
+&lt;/span>&lt;span class="lnt">57
+&lt;/span>&lt;span class="lnt">58
+&lt;/span>&lt;span class="lnt">59
+&lt;/span>&lt;span class="lnt">60
+&lt;/span>&lt;span class="lnt">61
+&lt;/span>&lt;span class="lnt">62
+&lt;/span>&lt;span class="lnt">63
+&lt;/span>&lt;span class="lnt">64
+&lt;/span>&lt;span class="lnt">65
+&lt;/span>&lt;span class="lnt">66
+&lt;/span>&lt;span class="lnt">67
+&lt;/span>&lt;span class="lnt">68
+&lt;/span>&lt;span class="lnt">69
+&lt;/span>&lt;span class="lnt">70
+&lt;/span>&lt;span class="lnt">71
+&lt;/span>&lt;span class="lnt">72
+&lt;/span>&lt;span class="lnt">73
+&lt;/span>&lt;span class="lnt">74
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Service&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Service
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> type: ClusterIP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sessionAffinity: None
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-tri
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> targetPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Deployment&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: apps/v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Deployment
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-provider-v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> replicas: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> matchLabels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> template:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> labels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> annotations:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # Prevent istio rewrite http probe
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sidecar.istio.io/rewriteAppHTTPProbers: &amp;#34;false&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containers:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: server
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> image: apache/dubbo-demo:dubbo-samples-mesh-provider-v1_0.0.1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> imagePullPolicy: Always
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-tri
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 22222
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> livenessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /live
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 10
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> readinessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /ready
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> startupProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /startup
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> failureThreshold: 30
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 10
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>以上命令创建了一个名为 &lt;code>dubbo-samples-mesh-provider&lt;/code> 的 Service，注意这里的 service name 与项目中的 dubbo 应用名是一样的。&lt;/p>
+&lt;p>接着 Deployment 部署了一个 2 副本的 pod 实例，至此 Provider 启动完成。&lt;/p>
+&lt;p>可以通过如下命令检查启动日志。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 列表&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pods -l &lt;span class="nv">app&lt;/span>&lt;span class="o">=&lt;/span>dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 部署日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs your-pod-id
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>这时 pod 中应该有一个 dubbo provider 容器实例，同时还有一个 Envoy Sidecar 容器实例。&lt;/p>
+&lt;h4 id="部署-consumer">
+&lt;a href="#%e9%83%a8%e7%bd%b2-consumer">#&lt;/a>
+部署 Consumer
+&lt;/h4>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;span class="lnt">30
+&lt;/span>&lt;span class="lnt">31
+&lt;/span>&lt;span class="lnt">32
+&lt;/span>&lt;span class="lnt">33
+&lt;/span>&lt;span class="lnt">34
+&lt;/span>&lt;span class="lnt">35
+&lt;/span>&lt;span class="lnt">36
+&lt;/span>&lt;span class="lnt">37
+&lt;/span>&lt;span class="lnt">38
+&lt;/span>&lt;span class="lnt">39
+&lt;/span>&lt;span class="lnt">40
+&lt;/span>&lt;span class="lnt">41
+&lt;/span>&lt;span class="lnt">42
+&lt;/span>&lt;span class="lnt">43
+&lt;/span>&lt;span class="lnt">44
+&lt;/span>&lt;span class="lnt">45
+&lt;/span>&lt;span class="lnt">46
+&lt;/span>&lt;span class="lnt">47
+&lt;/span>&lt;span class="lnt">48
+&lt;/span>&lt;span class="lnt">49
+&lt;/span>&lt;span class="lnt">50
+&lt;/span>&lt;span class="lnt">51
+&lt;/span>&lt;span class="lnt">52
+&lt;/span>&lt;span class="lnt">53
+&lt;/span>&lt;span class="lnt">54
+&lt;/span>&lt;span class="lnt">55
+&lt;/span>&lt;span class="lnt">56
+&lt;/span>&lt;span class="lnt">57
+&lt;/span>&lt;span class="lnt">58
+&lt;/span>&lt;span class="lnt">59
+&lt;/span>&lt;span class="lnt">60
+&lt;/span>&lt;span class="lnt">61
+&lt;/span>&lt;span class="lnt">62
+&lt;/span>&lt;span class="lnt">63
+&lt;/span>&lt;span class="lnt">64
+&lt;/span>&lt;span class="lnt">65
+&lt;/span>&lt;span class="lnt">66
+&lt;/span>&lt;span class="lnt">67
+&lt;/span>&lt;span class="lnt">68
+&lt;/span>&lt;span class="lnt">69
+&lt;/span>&lt;span class="lnt">70
+&lt;/span>&lt;span class="lnt">71
+&lt;/span>&lt;span class="lnt">72
+&lt;/span>&lt;span class="lnt">73
+&lt;/span>&lt;span class="lnt">74
+&lt;/span>&lt;span class="lnt">75
+&lt;/span>&lt;span class="lnt">76
+&lt;/span>&lt;span class="lnt">77
+&lt;/span>&lt;span class="lnt">78
+&lt;/span>&lt;span class="lnt">79
+&lt;/span>&lt;span class="lnt">80
+&lt;/span>&lt;span class="lnt">81
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Service&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Service
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> type: ClusterIP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sessionAffinity: None
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-dubbo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> targetPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Deployment&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: apps/v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Deployment
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> replicas: 1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> matchLabels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> template:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> labels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> annotations:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # Prevent istio rewrite http probe
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sidecar.istio.io/rewriteAppHTTPProbers: &amp;#34;false&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containers:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: server
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> image: apache/dubbo-demo:dubbo-samples-mesh-consumer_0.0.1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> imagePullPolicy: Always
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-tri
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 22222
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> env:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: POD_NAMESPACE
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> valueFrom:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> fieldRef:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> fieldPath: metadata.namespace
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # This environment variable does not need to be configured by default. When the domain name suffix used inside k8s is artificially changed, it is only necessary to configure this
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> #- name: CLUSTER_DOMAIN
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # value: cluster.local
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> livenessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /live
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> readinessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /ready
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> startupProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /startup
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> failureThreshold: 30
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>部署 consumer 与 provider 是一样的，这里也保持了 K8S Service 与 Dubbo consumer application name(在 &lt;a class="link" href="https://github.com/apache/dubbo-samples/blob/master/dubbo-samples-mesh-k8s/dubbo-samples-mesh-consumer/src/main/resources/spring/dubbo-consumer.properties" target="_blank" rel="noopener"
+>dubbo.properties&lt;/a> 中定义) 一致： &lt;code>dubbo.application.name=dubbo-samples-mesh-consumer&lt;/code>。&lt;/p>
+&lt;blockquote>
+&lt;p>Dubbo Consumer 服务声明中还指定了消费的 Provider 服务（应用）名 &lt;code>@DubboReference(version = &amp;quot;1.0.0&amp;quot;, providedBy = &amp;quot;dubbo-samples-mesh-provider&amp;quot;, lazy = true)&lt;/code>&lt;/p>
+&lt;/blockquote>
+&lt;h3 id="检查-provider-和-consumer-正常通信">
+&lt;a href="#%e6%a3%80%e6%9f%a5-provider-%e5%92%8c-consumer-%e6%ad%a3%e5%b8%b8%e9%80%9a%e4%bf%a1">#&lt;/a>
+检查 Provider 和 Consumer 正常通信
+&lt;/h3>&lt;p>继执行 3.3 步骤后， 检查启动日志，查看 consumer 完成对 provider 服务的消费。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;span class="lnt">6
+&lt;/span>&lt;span class="lnt">7
+&lt;/span>&lt;span class="lnt">8
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 列表&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pods -l &lt;span class="nv">app&lt;/span>&lt;span class="o">=&lt;/span>dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 部署日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs your-pod-id
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod isitio-proxy 日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs your-pod-id -c istio-proxy
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>可以看到 consumer pod 日志输出如下( Triple 协议被 Envoy 代理负载均衡):&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="o">====================&lt;/span> dubbo invoke &lt;span class="m">0&lt;/span> &lt;span class="nv">end&lt;/span> &lt;span class="o">====================&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:07:36:036 UTC&lt;span class="o">]&lt;/span> main INFO action.GreetingServiceConsumer: consumer Unary reply &amp;lt;-message: &lt;span class="s2">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">====================&lt;/span> dubbo invoke &lt;span class="m">1&lt;/span> &lt;span class="nv">end&lt;/span> &lt;span class="o">====================&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:07:42:042 UTC&lt;span class="o">]&lt;/span> main INFO action.GreetingServiceConsumer: consumer Unary reply &amp;lt;-message: &lt;span class="s2">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>consumer istio-proxy 日志输出如下:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>2022-07-15T05:35:14.418Z&lt;span class="o">]&lt;/span> &lt;span class="s2">&amp;#34;POST /org.apache.dubbo.samples.Greeter/greet HTTP/2&amp;#34;&lt;/span> &lt;span class="m">200&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">- via_upstream - &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="m">19&lt;/span> &lt;span class="m">160&lt;/span> &lt;span class="m">2&lt;/span> &lt;span class="m">1&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;6b8a5a03-5783-98bf-9bee-f93ea6e3d68e&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s2">&amp;#34;dubbo-samples-mesh-provider:50052&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;172.17.0.4:50052&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">outbound&lt;span class="p">|&lt;/span>50052&lt;span class="o">||&lt;/span>dubbo-samples-mesh-provider.dubbo-demo.svc.cluster.local 172.17.0.7:52768 10.101.172.129:50052 172.17.0.7:38488 - default
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>可以看到 provider pod 日志输出如下:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:08:47:047 UTC&lt;span class="o">]&lt;/span> tri-protocol-50052-thread-8 INFO impl.GreeterImpl: Server &lt;span class="nb">test&lt;/span> dubbo tri mesh received greet request name: &lt;span class="s2">&amp;#34;service mesh&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:08:57:057 UTC&lt;span class="o">]&lt;/span> tri-protocol-50052-thread-9 INFO impl.GreeterImpl: Server &lt;span class="nb">test&lt;/span> dubbo tri mesh received greet request name: &lt;span class="s2">&amp;#34;service mesh&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>provider istio-proxy 日志输出如下:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>2022-07-15T05:25:34.061Z&lt;span class="o">]&lt;/span> &lt;span class="s2">&amp;#34;POST /org.apache.dubbo.samples.Greeter/greet HTTP/2&amp;#34;&lt;/span> &lt;span class="m">200&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">- via_upstream - &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="m">19&lt;/span> &lt;span class="m">162&lt;/span> &lt;span class="m">1&lt;/span> &lt;span class="m">1&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;201e6976-da10-96e1-8da7-ad032e58db47&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s2">&amp;#34;dubbo-samples-mesh-provider:50052&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;172.17.0.10:50052&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> inbound&lt;span class="p">|&lt;/span>50052&lt;span class="o">||&lt;/span> 127.0.0.6:47013 172.17.0.10:50052 172.17.0.7:60244
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> outbound_.50052_._.dubbo-samples-mesh-provider.dubbo-demo.svc.cluster.local default
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="istio-流量治理">
+&lt;a href="#istio-%e6%b5%81%e9%87%8f%e6%b2%bb%e7%90%86">#&lt;/a>
+Istio 流量治理
+&lt;/h3>&lt;p>部署 v2 版本的 demo provider&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl apply -f https://raw.githubusercontent.com/apache/dubbo-samples/master/dubbo-samples-mesh-k8s/deploy/provider/Deployment-v2.yml
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>设置 VirtualService 与 DestinationRule，观察流量按照 4:1 的比例分别被引导到 provider v1 与 provider v2 版本。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl apply -f https://raw.githubusercontent.com/apache/dubbo-samples/master/dubbo-samples-mesh-k8s/deploy/traffic/virtual-service.yml
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>从消费端日志输出中，观察流量分布效果如下图：&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-java" data-lang="java">&lt;span class="line">&lt;span class="cl">&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">100&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">15&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">58&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">058&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">101&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">03&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">003&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">102&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">008&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">103&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">13&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">013&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v2: 172.18.96.6:50052, client: 172.18.96.6, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">104&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">18&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">018&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">105&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">24&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">024&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">106&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">29&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">029&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">107&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">34&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">034&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">108&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">39&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">039&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">109&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">44&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">044&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>查看 dashboard
+Istio 官网查看 &lt;a class="link" href="https://istio.io/latest/docs/setup/getting-started/#dashboard" target="_blank" rel="noopener"
+>如何启动 dashboard&lt;/a>。&lt;/p>
+&lt;h3 id="修改示例">
+&lt;a href="#%e4%bf%ae%e6%94%b9%e7%a4%ba%e4%be%8b">#&lt;/a>
+修改示例
+&lt;/h3>&lt;blockquote>
+&lt;ol>
+&lt;li>注意项目存储路径一定是英文，否则 protobuf 编译失败。&lt;/li>
+&lt;li>以为应用开发与打包的指引说明。&lt;/li>
+&lt;/ol>
+&lt;/blockquote>
+&lt;p>修改 Dubbo Provider 配置 &lt;code>dubbo-provider.properties&lt;/code>&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;span class="lnt">6
+&lt;/span>&lt;span class="lnt">7
+&lt;/span>&lt;span class="lnt">8
+&lt;/span>&lt;span class="lnt">9
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-properties" data-lang="properties">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># provider&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">dubbo-samples-mesh-provider&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.metadataServicePort&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">20885&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.registry.address&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">N/A&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">tri&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.port&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">50052&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosEnable&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 为了使 Kubernetes 集群能够正常访问到探针，需要开启 QOS 允许远程访问，此操作有可能带来安全风险，请仔细评估后再打开&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosAcceptForeignIp&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>修改 Dubbo Consumer 配置 &lt;code>dubbo-consumer.properties&lt;/code>&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-properties" data-lang="properties">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># consumer&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">dubbo-samples-mesh-consumer&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.metadataServicePort&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">20885&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.registry.address&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">N/A&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">tri&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.port&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">20880&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.consumer.timeout&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">30000&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosEnable&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 为了使 Kubernetes 集群能够正常访问到探针，需要开启 QOS 允许远程访问，此操作有可能带来安全风险，请仔细评估后再打开&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosAcceptForeignIp&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 标记开启 mesh sidecar 代理模式&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.consumer.meshEnable&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>完成代码修改后，通过项目提供的 Dockerfile 打包镜像&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 打包并推送镜像&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">mvn compile jib:build
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;blockquote>
+&lt;p>Jib 插件会自动打包并发布镜像。注意，本地开发需将 jib 插件配置中的 docker registry 组织 dubboteam 改为自己有权限的组织（包括其他 kubernetes manifests 中的 dubboteam 也要修改，以确保 kubernetes 部署的是自己定制后的镜像），如遇到 jib 插件认证问题，请参考&lt;a class="link" href="https://github.com/GoogleContainerTools/jib/blob/master/docs/faq.md#what-should-i-do-when-the-registry-responds-with-unauthorized" target="_blank" rel="noopener"
+>相应链接&lt;/a>配置 docker registry 认证信息。
+可以通过直接在命令行指定 &lt;code>mvn compile jib:build -Djib.to.auth.username=x -Djib.to.auth.password=x -Djib.from.auth.username=x -Djib.from.auth.username=x&lt;/code>，或者使用 docker-credential-helper.&lt;/p>
+&lt;/blockquote>
+&lt;h2 id="常用命令">
+&lt;a href="#%e5%b8%b8%e7%94%a8%e5%91%bd%e4%bb%a4">#&lt;/a>
+常用命令
+&lt;/h2>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># dump current Envoy configs&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl &lt;span class="nb">exec&lt;/span> -it &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -c istio-proxy curl http://127.0.0.1:15000/config_dump &amp;gt; config_dump
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 进入 istio-proxy 容器&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl &lt;span class="nb">exec&lt;/span> -it &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -c istio-proxy -- /bin/bash
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看容器日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -n &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -n &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span> -c istio-proxy
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 开启自动注入sidecar&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl label namespace &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span> istio-injection&lt;span class="o">=&lt;/span>enabled --overwrite
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 关闭自动注入sidecar&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl label namespace &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span> istio-injection&lt;span class="o">=&lt;/span>disabled --overwrite
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div></description></item></channel></rss>

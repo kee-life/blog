@@ -1,0 +1,1905 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Personal blog</title><link>https://blog.elmle.cn/</link><description>Recent content on Personal blog</description><generator>Hugo -- gohugo.io</generator><language>en</language><lastBuildDate>Fri, 06 Jan 2023 11:34:00 +0000</lastBuildDate><atom:link href="https://blog.elmle.cn/index.xml" rel="self" type="application/rss+xml"/><item><title>Dubbo demo using Istio</title><link>https://blog.elmle.cn/posts/dubbo-mesh/</link><pubDate>Fri, 06 Jan 2023 11:34:00 +0000</pubDate><guid>https://blog.elmle.cn/posts/dubbo-mesh/</guid><description>&lt;img src="https://blog.elmle.cn/posts/dubbo-mesh/cover.jpeg" alt="Featured image of post Dubbo demo using Istio" />&lt;p>可以按照下文步骤，将 Demo 部署到本地集群。&lt;/p>
+&lt;h2 id="总体目标">
+&lt;a href="#%e6%80%bb%e4%bd%93%e7%9b%ae%e6%a0%87">#&lt;/a>
+总体目标
+&lt;/h2>&lt;ul>
+&lt;li>部署 Dubbo 应用到 Kubernetes&lt;/li>
+&lt;li>Istio 自动注入 Envoy 并实现流量拦截&lt;/li>
+&lt;li>基于 Istio 规则进行流量治理&lt;/li>
+&lt;/ul>
+&lt;h2 id="基本流程与工作原理">
+&lt;a href="#%e5%9f%ba%e6%9c%ac%e6%b5%81%e7%a8%8b%e4%b8%8e%e5%b7%a5%e4%bd%9c%e5%8e%9f%e7%90%86">#&lt;/a>
+基本流程与工作原理
+&lt;/h2>&lt;p>这个示例演示了如何将 Dubbo 开发的应用部署在 Istio 体系下，以实现 Envoy 对 Dubbo 服务的自动代理，示例总体架构如下图所示。&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/dubbo-mesh/assets/thinsdk.png"
+width="243"
+height="204"
+srcset="https://blog.elmle.cn/posts/dubbo-mesh/assets/thinsdk_huc6778007af8d55e55051f43369fa1c20_7418_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/dubbo-mesh/assets/thinsdk_huc6778007af8d55e55051f43369fa1c20_7418_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="119"
+data-flex-basis="285px"
+>&lt;/p>
+&lt;p>完成示例将需要的步骤如下：&lt;/p>
+&lt;ol>
+&lt;li>创建一个 Dubbo 应用( &lt;a class="link" href="https://github.com/apache/dubbo-samples/tree/master/dubbo-samples-mesh-k8s" target="_blank" rel="noopener"
+>dubbo-samples-mesh-k8s&lt;/a> )&lt;/li>
+&lt;li>构建容器镜像并推送到镜像仓库（ &lt;a class="link" href="https://hub.docker.com/u/dubboteam" target="_blank" rel="noopener"
+>本示例官方镜像&lt;/a> ）&lt;/li>
+&lt;li>分别部署 Dubbo Provider 与 Dubbo Consumer 到 Kubernetes 并验证 Envoy 代理注入成功&lt;/li>
+&lt;li>验证 Envoy 发现服务地址、正常拦截 RPC 流量并实现负载均衡&lt;/li>
+&lt;li>优化并配置健康检查流程&lt;/li>
+&lt;/ol>
+&lt;h2 id="详细步骤">
+&lt;a href="#%e8%af%a6%e7%bb%86%e6%ad%a5%e9%aa%a4">#&lt;/a>
+详细步骤
+&lt;/h2>&lt;h3 id="环境要求">
+&lt;a href="#%e7%8e%af%e5%a2%83%e8%a6%81%e6%b1%82">#&lt;/a>
+环境要求
+&lt;/h3>&lt;p>请确保本地安装如下环境，以提供容器运行时、Kubernetes集群及访问工具&lt;/p>
+&lt;ul>
+&lt;li>&lt;a class="link" href="https://www.docker.com/get-started/" target="_blank" rel="noopener"
+>Docker&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://minikube.sigs.k8s.io/docs/start/" target="_blank" rel="noopener"
+>Minikube&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://kubernetes.io/docs/tasks/tools/" target="_blank" rel="noopener"
+>Kubectl&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://istio.io/latest/docs/setup/getting-started/" target="_blank" rel="noopener"
+>Istio&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://github.com/ahmetb/kubectx" target="_blank" rel="noopener"
+>Kubens(optional)&lt;/a>&lt;/li>
+&lt;/ul>
+&lt;p>通过以下命令启动本地 Kubernetes 集群&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">minikube start
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>通过 kubectl 检查集群正常运行，且 kubectl 绑定到默认本地集群&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl cluster-info
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="前置条件">
+&lt;a href="#%e5%89%8d%e7%bd%ae%e6%9d%a1%e4%bb%b6">#&lt;/a>
+前置条件
+&lt;/h3>&lt;p>通过以下命令为示例项目创建独立的 Namespace &lt;code>dubbo-demo&lt;/code>，同时开启 sidecar 自动注入。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 初始化命名空间并开启sidecar自动注入&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Namespace
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> labels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> istio-injection: enabled
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 切换命名空间&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubens dubbo-demo
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="部署到-kubernetes">
+&lt;a href="#%e9%83%a8%e7%bd%b2%e5%88%b0-kubernetes">#&lt;/a>
+部署到 Kubernetes
+&lt;/h3>&lt;h4 id="部署-provider">
+&lt;a href="#%e9%83%a8%e7%bd%b2-provider">#&lt;/a>
+部署 Provider
+&lt;/h4>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;span class="lnt">30
+&lt;/span>&lt;span class="lnt">31
+&lt;/span>&lt;span class="lnt">32
+&lt;/span>&lt;span class="lnt">33
+&lt;/span>&lt;span class="lnt">34
+&lt;/span>&lt;span class="lnt">35
+&lt;/span>&lt;span class="lnt">36
+&lt;/span>&lt;span class="lnt">37
+&lt;/span>&lt;span class="lnt">38
+&lt;/span>&lt;span class="lnt">39
+&lt;/span>&lt;span class="lnt">40
+&lt;/span>&lt;span class="lnt">41
+&lt;/span>&lt;span class="lnt">42
+&lt;/span>&lt;span class="lnt">43
+&lt;/span>&lt;span class="lnt">44
+&lt;/span>&lt;span class="lnt">45
+&lt;/span>&lt;span class="lnt">46
+&lt;/span>&lt;span class="lnt">47
+&lt;/span>&lt;span class="lnt">48
+&lt;/span>&lt;span class="lnt">49
+&lt;/span>&lt;span class="lnt">50
+&lt;/span>&lt;span class="lnt">51
+&lt;/span>&lt;span class="lnt">52
+&lt;/span>&lt;span class="lnt">53
+&lt;/span>&lt;span class="lnt">54
+&lt;/span>&lt;span class="lnt">55
+&lt;/span>&lt;span class="lnt">56
+&lt;/span>&lt;span class="lnt">57
+&lt;/span>&lt;span class="lnt">58
+&lt;/span>&lt;span class="lnt">59
+&lt;/span>&lt;span class="lnt">60
+&lt;/span>&lt;span class="lnt">61
+&lt;/span>&lt;span class="lnt">62
+&lt;/span>&lt;span class="lnt">63
+&lt;/span>&lt;span class="lnt">64
+&lt;/span>&lt;span class="lnt">65
+&lt;/span>&lt;span class="lnt">66
+&lt;/span>&lt;span class="lnt">67
+&lt;/span>&lt;span class="lnt">68
+&lt;/span>&lt;span class="lnt">69
+&lt;/span>&lt;span class="lnt">70
+&lt;/span>&lt;span class="lnt">71
+&lt;/span>&lt;span class="lnt">72
+&lt;/span>&lt;span class="lnt">73
+&lt;/span>&lt;span class="lnt">74
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Service&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Service
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> type: ClusterIP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sessionAffinity: None
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-tri
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> targetPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Deployment&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: apps/v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Deployment
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-provider-v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> replicas: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> matchLabels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> template:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> labels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> annotations:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # Prevent istio rewrite http probe
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sidecar.istio.io/rewriteAppHTTPProbers: &amp;#34;false&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containers:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: server
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> image: apache/dubbo-demo:dubbo-samples-mesh-provider-v1_0.0.1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> imagePullPolicy: Always
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-tri
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 22222
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> livenessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /live
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 10
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> readinessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /ready
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> startupProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /startup
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> failureThreshold: 30
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 10
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>以上命令创建了一个名为 &lt;code>dubbo-samples-mesh-provider&lt;/code> 的 Service，注意这里的 service name 与项目中的 dubbo 应用名是一样的。&lt;/p>
+&lt;p>接着 Deployment 部署了一个 2 副本的 pod 实例，至此 Provider 启动完成。&lt;/p>
+&lt;p>可以通过如下命令检查启动日志。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 列表&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pods -l &lt;span class="nv">app&lt;/span>&lt;span class="o">=&lt;/span>dubbo-samples-mesh-provider
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 部署日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs your-pod-id
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>这时 pod 中应该有一个 dubbo provider 容器实例，同时还有一个 Envoy Sidecar 容器实例。&lt;/p>
+&lt;h4 id="部署-consumer">
+&lt;a href="#%e9%83%a8%e7%bd%b2-consumer">#&lt;/a>
+部署 Consumer
+&lt;/h4>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;span class="lnt">30
+&lt;/span>&lt;span class="lnt">31
+&lt;/span>&lt;span class="lnt">32
+&lt;/span>&lt;span class="lnt">33
+&lt;/span>&lt;span class="lnt">34
+&lt;/span>&lt;span class="lnt">35
+&lt;/span>&lt;span class="lnt">36
+&lt;/span>&lt;span class="lnt">37
+&lt;/span>&lt;span class="lnt">38
+&lt;/span>&lt;span class="lnt">39
+&lt;/span>&lt;span class="lnt">40
+&lt;/span>&lt;span class="lnt">41
+&lt;/span>&lt;span class="lnt">42
+&lt;/span>&lt;span class="lnt">43
+&lt;/span>&lt;span class="lnt">44
+&lt;/span>&lt;span class="lnt">45
+&lt;/span>&lt;span class="lnt">46
+&lt;/span>&lt;span class="lnt">47
+&lt;/span>&lt;span class="lnt">48
+&lt;/span>&lt;span class="lnt">49
+&lt;/span>&lt;span class="lnt">50
+&lt;/span>&lt;span class="lnt">51
+&lt;/span>&lt;span class="lnt">52
+&lt;/span>&lt;span class="lnt">53
+&lt;/span>&lt;span class="lnt">54
+&lt;/span>&lt;span class="lnt">55
+&lt;/span>&lt;span class="lnt">56
+&lt;/span>&lt;span class="lnt">57
+&lt;/span>&lt;span class="lnt">58
+&lt;/span>&lt;span class="lnt">59
+&lt;/span>&lt;span class="lnt">60
+&lt;/span>&lt;span class="lnt">61
+&lt;/span>&lt;span class="lnt">62
+&lt;/span>&lt;span class="lnt">63
+&lt;/span>&lt;span class="lnt">64
+&lt;/span>&lt;span class="lnt">65
+&lt;/span>&lt;span class="lnt">66
+&lt;/span>&lt;span class="lnt">67
+&lt;/span>&lt;span class="lnt">68
+&lt;/span>&lt;span class="lnt">69
+&lt;/span>&lt;span class="lnt">70
+&lt;/span>&lt;span class="lnt">71
+&lt;/span>&lt;span class="lnt">72
+&lt;/span>&lt;span class="lnt">73
+&lt;/span>&lt;span class="lnt">74
+&lt;/span>&lt;span class="lnt">75
+&lt;/span>&lt;span class="lnt">76
+&lt;/span>&lt;span class="lnt">77
+&lt;/span>&lt;span class="lnt">78
+&lt;/span>&lt;span class="lnt">79
+&lt;/span>&lt;span class="lnt">80
+&lt;/span>&lt;span class="lnt">81
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Service&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Service
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> type: ClusterIP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sessionAffinity: None
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-dubbo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> targetPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 部署 Deployment&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">cat &amp;gt; &lt;span class="s">&amp;lt;&amp;lt; EOF | kubectl apply -f -
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">apiVersion: apps/v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">kind: Deployment
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> name: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> namespace: dubbo-demo
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> replicas: 1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> selector:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> matchLabels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> template:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> metadata:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> labels:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> app: dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> version: v1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> annotations:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # Prevent istio rewrite http probe
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> sidecar.istio.io/rewriteAppHTTPProbers: &amp;#34;false&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> spec:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containers:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: server
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> image: apache/dubbo-demo:dubbo-samples-mesh-consumer_0.0.1
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> imagePullPolicy: Always
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> ports:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: grpc-tri
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 50052
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> containerPort: 22222
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> protocol: TCP
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> env:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> - name: POD_NAMESPACE
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> valueFrom:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> fieldRef:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> fieldPath: metadata.namespace
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # This environment variable does not need to be configured by default. When the domain name suffix used inside k8s is artificially changed, it is only necessary to configure this
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> #- name: CLUSTER_DOMAIN
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> # value: cluster.local
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> livenessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /live
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> readinessProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /ready
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> startupProbe:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> httpGet:
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> path: /startup
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> port: http-health
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> failureThreshold: 30
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> initialDelaySeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> periodSeconds: 5
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s"> timeoutSeconds: 2
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>部署 consumer 与 provider 是一样的，这里也保持了 K8S Service 与 Dubbo consumer application name(在 &lt;a class="link" href="https://github.com/apache/dubbo-samples/blob/master/dubbo-samples-mesh-k8s/dubbo-samples-mesh-consumer/src/main/resources/spring/dubbo-consumer.properties" target="_blank" rel="noopener"
+>dubbo.properties&lt;/a> 中定义) 一致： &lt;code>dubbo.application.name=dubbo-samples-mesh-consumer&lt;/code>。&lt;/p>
+&lt;blockquote>
+&lt;p>Dubbo Consumer 服务声明中还指定了消费的 Provider 服务（应用）名 &lt;code>@DubboReference(version = &amp;quot;1.0.0&amp;quot;, providedBy = &amp;quot;dubbo-samples-mesh-provider&amp;quot;, lazy = true)&lt;/code>&lt;/p>
+&lt;/blockquote>
+&lt;h3 id="检查-provider-和-consumer-正常通信">
+&lt;a href="#%e6%a3%80%e6%9f%a5-provider-%e5%92%8c-consumer-%e6%ad%a3%e5%b8%b8%e9%80%9a%e4%bf%a1">#&lt;/a>
+检查 Provider 和 Consumer 正常通信
+&lt;/h3>&lt;p>继执行 3.3 步骤后， 检查启动日志，查看 consumer 完成对 provider 服务的消费。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;span class="lnt">6
+&lt;/span>&lt;span class="lnt">7
+&lt;/span>&lt;span class="lnt">8
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 列表&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl get pods -l &lt;span class="nv">app&lt;/span>&lt;span class="o">=&lt;/span>dubbo-samples-mesh-consumer
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod 部署日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs your-pod-id
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看 pod isitio-proxy 日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs your-pod-id -c istio-proxy
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>可以看到 consumer pod 日志输出如下( Triple 协议被 Envoy 代理负载均衡):&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="o">====================&lt;/span> dubbo invoke &lt;span class="m">0&lt;/span> &lt;span class="nv">end&lt;/span> &lt;span class="o">====================&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:07:36:036 UTC&lt;span class="o">]&lt;/span> main INFO action.GreetingServiceConsumer: consumer Unary reply &amp;lt;-message: &lt;span class="s2">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">====================&lt;/span> dubbo invoke &lt;span class="m">1&lt;/span> &lt;span class="nv">end&lt;/span> &lt;span class="o">====================&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:07:42:042 UTC&lt;span class="o">]&lt;/span> main INFO action.GreetingServiceConsumer: consumer Unary reply &amp;lt;-message: &lt;span class="s2">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>consumer istio-proxy 日志输出如下:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>2022-07-15T05:35:14.418Z&lt;span class="o">]&lt;/span> &lt;span class="s2">&amp;#34;POST /org.apache.dubbo.samples.Greeter/greet HTTP/2&amp;#34;&lt;/span> &lt;span class="m">200&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">- via_upstream - &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="m">19&lt;/span> &lt;span class="m">160&lt;/span> &lt;span class="m">2&lt;/span> &lt;span class="m">1&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;6b8a5a03-5783-98bf-9bee-f93ea6e3d68e&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s2">&amp;#34;dubbo-samples-mesh-provider:50052&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;172.17.0.4:50052&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">outbound&lt;span class="p">|&lt;/span>50052&lt;span class="o">||&lt;/span>dubbo-samples-mesh-provider.dubbo-demo.svc.cluster.local 172.17.0.7:52768 10.101.172.129:50052 172.17.0.7:38488 - default
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>可以看到 provider pod 日志输出如下:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:08:47:047 UTC&lt;span class="o">]&lt;/span> tri-protocol-50052-thread-8 INFO impl.GreeterImpl: Server &lt;span class="nb">test&lt;/span> dubbo tri mesh received greet request name: &lt;span class="s2">&amp;#34;service mesh&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>10/08/22 07:08:57:057 UTC&lt;span class="o">]&lt;/span> tri-protocol-50052-thread-9 INFO impl.GreeterImpl: Server &lt;span class="nb">test&lt;/span> dubbo tri mesh received greet request name: &lt;span class="s2">&amp;#34;service mesh&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>provider istio-proxy 日志输出如下:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="o">[&lt;/span>2022-07-15T05:25:34.061Z&lt;span class="o">]&lt;/span> &lt;span class="s2">&amp;#34;POST /org.apache.dubbo.samples.Greeter/greet HTTP/2&amp;#34;&lt;/span> &lt;span class="m">200&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">- via_upstream - &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="m">19&lt;/span> &lt;span class="m">162&lt;/span> &lt;span class="m">1&lt;/span> &lt;span class="m">1&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;-&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;201e6976-da10-96e1-8da7-ad032e58db47&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s2">&amp;#34;dubbo-samples-mesh-provider:50052&amp;#34;&lt;/span> &lt;span class="s2">&amp;#34;172.17.0.10:50052&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> inbound&lt;span class="p">|&lt;/span>50052&lt;span class="o">||&lt;/span> 127.0.0.6:47013 172.17.0.10:50052 172.17.0.7:60244
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> outbound_.50052_._.dubbo-samples-mesh-provider.dubbo-demo.svc.cluster.local default
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="istio-流量治理">
+&lt;a href="#istio-%e6%b5%81%e9%87%8f%e6%b2%bb%e7%90%86">#&lt;/a>
+Istio 流量治理
+&lt;/h3>&lt;p>部署 v2 版本的 demo provider&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl apply -f https://raw.githubusercontent.com/apache/dubbo-samples/master/dubbo-samples-mesh-k8s/deploy/provider/Deployment-v2.yml
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>设置 VirtualService 与 DestinationRule，观察流量按照 4:1 的比例分别被引导到 provider v1 与 provider v2 版本。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">kubectl apply -f https://raw.githubusercontent.com/apache/dubbo-samples/master/dubbo-samples-mesh-k8s/deploy/traffic/virtual-service.yml
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>从消费端日志输出中，观察流量分布效果如下图：&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-java" data-lang="java">&lt;span class="line">&lt;span class="cl">&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">100&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">15&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">58&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">058&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">101&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">03&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">003&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">102&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">008&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">103&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">13&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">013&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v2: 172.18.96.6:50052, client: 172.18.96.6, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">104&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">18&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">018&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">105&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">24&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">024&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">106&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">29&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">029&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">107&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">34&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">034&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">108&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">39&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">039&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.22:50052, client: 172.18.96.22, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">dubbo&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">invoke&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">109&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">end&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">====================&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="o">[&lt;/span>&lt;span class="n">10&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">08&lt;/span>&lt;span class="o">/&lt;/span>&lt;span class="n">22&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">07&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">16&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">44&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="n">044&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">UTC&lt;/span>&lt;span class="o">]&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">main&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">INFO&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">action&lt;/span>&lt;span class="p">.&lt;/span>&lt;span class="na">GreetingServiceConsumer&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">consumer&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">Unary&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="n">reply&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="o">&amp;lt;-&lt;/span>&lt;span class="n">message&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="s">&amp;#34;hello,service mesh, response from provider-v1: 172.18.96.18:50052, client: 172.18.96.18, local: dubbo-samples-mesh-provider, remote: null, isProviderSide: true&amp;#34;&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>查看 dashboard
+Istio 官网查看 &lt;a class="link" href="https://istio.io/latest/docs/setup/getting-started/#dashboard" target="_blank" rel="noopener"
+>如何启动 dashboard&lt;/a>。&lt;/p>
+&lt;h3 id="修改示例">
+&lt;a href="#%e4%bf%ae%e6%94%b9%e7%a4%ba%e4%be%8b">#&lt;/a>
+修改示例
+&lt;/h3>&lt;blockquote>
+&lt;ol>
+&lt;li>注意项目存储路径一定是英文，否则 protobuf 编译失败。&lt;/li>
+&lt;li>以为应用开发与打包的指引说明。&lt;/li>
+&lt;/ol>
+&lt;/blockquote>
+&lt;p>修改 Dubbo Provider 配置 &lt;code>dubbo-provider.properties&lt;/code>&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;span class="lnt">6
+&lt;/span>&lt;span class="lnt">7
+&lt;/span>&lt;span class="lnt">8
+&lt;/span>&lt;span class="lnt">9
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-properties" data-lang="properties">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># provider&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">dubbo-samples-mesh-provider&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.metadataServicePort&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">20885&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.registry.address&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">N/A&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">tri&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.port&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">50052&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosEnable&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 为了使 Kubernetes 集群能够正常访问到探针，需要开启 QOS 允许远程访问，此操作有可能带来安全风险，请仔细评估后再打开&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosAcceptForeignIp&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>修改 Dubbo Consumer 配置 &lt;code>dubbo-consumer.properties&lt;/code>&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-properties" data-lang="properties">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># consumer&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">dubbo-samples-mesh-consumer&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.metadataServicePort&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">20885&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.registry.address&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">N/A&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.name&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">tri&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.protocol.port&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">20880&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.consumer.timeout&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">30000&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosEnable&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 为了使 Kubernetes 集群能够正常访问到探针，需要开启 QOS 允许远程访问，此操作有可能带来安全风险，请仔细评估后再打开&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.application.qosAcceptForeignIp&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 标记开启 mesh sidecar 代理模式&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="na">dubbo.consumer.meshEnable&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="s">true&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>完成代码修改后，通过项目提供的 Dockerfile 打包镜像&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 打包并推送镜像&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">mvn compile jib:build
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;blockquote>
+&lt;p>Jib 插件会自动打包并发布镜像。注意，本地开发需将 jib 插件配置中的 docker registry 组织 dubboteam 改为自己有权限的组织（包括其他 kubernetes manifests 中的 dubboteam 也要修改，以确保 kubernetes 部署的是自己定制后的镜像），如遇到 jib 插件认证问题，请参考&lt;a class="link" href="https://github.com/GoogleContainerTools/jib/blob/master/docs/faq.md#what-should-i-do-when-the-registry-responds-with-unauthorized" target="_blank" rel="noopener"
+>相应链接&lt;/a>配置 docker registry 认证信息。
+可以通过直接在命令行指定 &lt;code>mvn compile jib:build -Djib.to.auth.username=x -Djib.to.auth.password=x -Djib.from.auth.username=x -Djib.from.auth.username=x&lt;/code>，或者使用 docker-credential-helper.&lt;/p>
+&lt;/blockquote>
+&lt;h2 id="常用命令">
+&lt;a href="#%e5%b8%b8%e7%94%a8%e5%91%bd%e4%bb%a4">#&lt;/a>
+常用命令
+&lt;/h2>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-shell" data-lang="shell">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># dump current Envoy configs&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl &lt;span class="nb">exec&lt;/span> -it &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -c istio-proxy curl http://127.0.0.1:15000/config_dump &amp;gt; config_dump
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 进入 istio-proxy 容器&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl &lt;span class="nb">exec&lt;/span> -it &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -c istio-proxy -- /bin/bash
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 查看容器日志&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -n &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl logs &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> pod id&lt;/span>&lt;span class="si">}&lt;/span> -n &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span> -c istio-proxy
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 开启自动注入sidecar&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl label namespace &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span> istio-injection&lt;span class="o">=&lt;/span>enabled --overwrite
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># 关闭自动注入sidecar&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">kubectl label namespace &lt;span class="si">${&lt;/span>&lt;span class="nv">your&lt;/span>&lt;span class="p"> namespace&lt;/span>&lt;span class="si">}&lt;/span> istio-injection&lt;span class="o">=&lt;/span>disabled --overwrite
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div></description></item><item><title>Archives</title><link>https://blog.elmle.cn/archives/</link><pubDate>Sun, 06 Mar 2022 00:00:00 +0000</pubDate><guid>https://blog.elmle.cn/archives/</guid><description/></item><item><title>configure zsh environment</title><link>https://blog.elmle.cn/posts/zsh/</link><pubDate>Fri, 19 Mar 2021 10:34:00 +0000</pubDate><guid>https://blog.elmle.cn/posts/zsh/</guid><description>&lt;img src="https://blog.elmle.cn/posts/zsh/daveverwer.jpg" alt="Featured image of post configure zsh environment" />&lt;h2 id="install-oh-my-zsh-with-curl">
+&lt;a href="#install-oh-my-zsh-with-curl">#&lt;/a>
+Install &lt;code>oh-my-zsh&lt;/code> with curl
+&lt;/h2>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">sh -c &lt;span class="s2">&amp;#34;&lt;/span>&lt;span class="k">$(&lt;/span>curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh&lt;span class="k">)&lt;/span>&lt;span class="s2">&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h2 id="enabling-plugins-and-themes">
+&lt;a href="#enabling-plugins-and-themes">#&lt;/a>
+Enabling Plugins and Themes
+&lt;/h2>&lt;h3 id="zsh-autosuggestions">
+&lt;a href="#zsh-autosuggestions">#&lt;/a>
+zsh-autosuggestions
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl"> git clone https://github.com/zsh-users/zsh-autosuggestions.git &lt;span class="nv">$ZSH_CUSTOM&lt;/span>/plugins/zsh-autosuggestions
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="zsh-syntax-highlighting">
+&lt;a href="#zsh-syntax-highlighting">#&lt;/a>
+zsh-syntax-highlighting
+&lt;/h3>&lt;ul>
+&lt;li>download&lt;/li>
+&lt;/ul>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl"> git clone https://github.com/zsh-users/zsh-syntax-highlighting.git &lt;span class="nv">$ZSH_CUSTOM&lt;/span>/plugins/zsh-syntax-highlighting
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ul>
+&lt;li>
+&lt;p>&lt;code>nano ~/.zshrc&lt;/code> find &lt;code>plugins=(git)&lt;/code>&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>Append &lt;code>zsh-autosuggestions &amp;amp; zsh-syntax-highlighting&lt;/code> to &lt;code>plugins()&lt;/code> like this&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;p>&lt;code>plugins=(git zsh-autosuggestions zsh-syntax-highlighting)&lt;/code>&lt;/p>
+&lt;h3 id="powerlevel10k">
+&lt;a href="#powerlevel10k">#&lt;/a>
+powerlevel10k
+&lt;/h3>&lt;ul>
+&lt;li>download&lt;/li>
+&lt;/ul>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">git clone --depth&lt;span class="o">=&lt;/span>&lt;span class="m">1&lt;/span> https://github.com/romkatv/powerlevel10k.git &lt;span class="si">${&lt;/span>&lt;span class="nv">ZSH_CUSTOM&lt;/span>&lt;span class="k">:-&lt;/span>&lt;span class="p">~/.oh-my-zsh/custom&lt;/span>&lt;span class="si">}&lt;/span>/themes/powerlevel10k
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ul>
+&lt;li>
+&lt;p>edit ~/.zshrc, add &lt;code>ZSH_THEME=&amp;quot;powerlevel10k/powerlevel10k&amp;quot;&lt;/code>&lt;/p>
+&lt;/li>
+&lt;li>
+&lt;p>reopen terminal to configure p10k theme (or run &lt;code>p10k configure&lt;/code>)&lt;/p>
+&lt;/li>
+&lt;/ul>
+&lt;h2 id="install-nerd-fonts-optional">
+&lt;a href="#install-nerd-fonts-optional">#&lt;/a>
+Install &lt;code>Nerd Fonts&lt;/code> (optional)
+&lt;/h2>&lt;ul>
+&lt;li>download&lt;/li>
+&lt;/ul>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">mkdir -p ~/.local/share/fonts
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nb">cd&lt;/span> ~/.local/share/fonts &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> curl -fLo &lt;span class="s2">&amp;#34;Droid Sans Mono for Powerline Nerd Font Complete.otf&amp;#34;&lt;/span> https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/DroidSansMono/complete/Droid%20Sans%20Mono%20Nerd%20Font%20Complete.otf
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ul>
+&lt;li>cache fonts&lt;/li>
+&lt;/ul>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">fc-cache -vf ~/.local/share/fonts/
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ul>
+&lt;li>check&lt;/li>
+&lt;/ul>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">fc-list &lt;span class="p">|&lt;/span> grep -i droid
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ul>
+&lt;li>set font for terminal&lt;/li>
+&lt;/ul>
+&lt;h2 id="ref">
+&lt;a href="#ref">#&lt;/a>
+Ref
+&lt;/h2>&lt;blockquote>
+&lt;ul>
+&lt;li>&lt;a class="link" href="https://github.com/robbyrussell/oh-my-zsh" target="_blank" rel="noopener"
+>oh-my-zsh&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://github.com/zsh-users/zsh-autosuggestions" target="_blank" rel="noopener"
+>zsh-autosuggestions&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://github.com/zsh-users/zsh-syntax-highlighting" target="_blank" rel="noopener"
+>zsh-syntax-highlighting&lt;/a>&lt;/li>
+&lt;li>&lt;a class="link" href="https://gist.github.com/kevin-smets/8568070" target="_blank" rel="noopener"
+>https://gist.github.com/kevin-smets/8568070&lt;/a>&lt;/li>
+&lt;/ul>
+&lt;/blockquote></description></item><item><title>setup a gitlab code repository with docker</title><link>https://blog.elmle.cn/posts/gitlab-docker-setup/</link><pubDate>Thu, 15 Oct 2020 19:11:54 +0000</pubDate><guid>https://blog.elmle.cn/posts/gitlab-docker-setup/</guid><description>&lt;p>The GitLab Docker images are monolithic images of GitLab running all the necessary services in a single container. If you instead want to install GitLab on Kubernetes, see &lt;a class="link" href="https://docs.gitlab.com/charts/" target="_blank" rel="noopener"
+>GitLab Helm Charts&lt;/a>.&lt;/p>
+&lt;p>Find GitLab’s official Docker image at:&lt;/p>
+&lt;ul>
+&lt;li>&lt;a class="link" href="https://hub.docker.com/r/gitlab/gitlab-ee/" target="_blank" rel="noopener"
+>GitLab Docker image in Docker Hub&lt;/a>&lt;/li>
+&lt;/ul>
+&lt;h2 id="installation">
+&lt;a href="#installation">#&lt;/a>
+Installation
+&lt;/h2>&lt;h3 id="installation-gitlab-using-docker-engine">
+&lt;a href="#installation-gitlab-using-docker-engine">#&lt;/a>
+Installation GitLab using Docker Engine
+&lt;/h3>&lt;p>You can fine tune these directories to meet your requirements. Once you’ve set up the GITLAB_HOME variable, you can run the image:&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="nb">export&lt;/span> &lt;span class="nv">GITLAB_HOME&lt;/span>&lt;span class="o">=&lt;/span>/data
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo docker run --detach &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --hostname gitlab.example.com &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --publish 443:443 --publish 80:80 --publish 22:22 &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --name gitlab &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --restart always &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --volume &lt;span class="nv">$GITLAB_HOME&lt;/span>/config:/etc/gitlab &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --volume &lt;span class="nv">$GITLAB_HOME&lt;/span>/logs:/var/log/gitlab &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --volume &lt;span class="nv">$GITLAB_HOME&lt;/span>/data:/var/opt/gitlab &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> gitlab/gitlab-ee:latest
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>This will download and start a GitLab container and publish ports needed to access SSH, HTTP and HTTPS. All GitLab data will be stored as subdirectories of $GITLAB_HOME. The container will automatically restart after a system reboot.&lt;/p>
+&lt;blockquote>
+&lt;p>&lt;a class="link" href="https://docs.gitlab.com/omnibus/docker/" target="_blank" rel="noopener"
+>GitLab Docker images&lt;/a>&lt;/p>
+&lt;/blockquote></description></item><item><title>prepare a devlopment environment for istio</title><link>https://blog.elmle.cn/posts/prepare-istio-env/</link><pubDate>Wed, 20 Feb 2019 14:00:00 +0000</pubDate><guid>https://blog.elmle.cn/posts/prepare-istio-env/</guid><description>&lt;p>In this post, we will describe the process of preparing a development environment for sofa-mesh &amp;amp; sofa-mosn.&lt;/p>
+&lt;h2 id="minikube">
+&lt;a href="#minikube">#&lt;/a>
+minikube
+&lt;/h2>&lt;h3 id="install-minikubehttpsgithubcomkubernetesminikube">
+&lt;a href="#install-minikubehttpsgithubcomkubernetesminikube">#&lt;/a>
+install &lt;a class="link" href="https://github.com/kubernetes/minikube" target="_blank" rel="noopener"
+>minikube&lt;/a>
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">mkdir -p &lt;span class="nv">$GOPATH&lt;/span>/src/k8s.io
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">git clone https://github.com/kubernetes/minikube.git &lt;span class="nv">$GOPATH&lt;/span>/src/k8s.io/minikube
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nb">cd&lt;/span> &lt;span class="nv">$_&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">make
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>&lt;a class="link" href="https://github.com/kubernetes/minikube/blob/master/docs/contributors/build_guide.md" target="_blank" rel="noopener"
+>build guide&lt;/a>&lt;/p>
+&lt;h3 id="start-minikube">
+&lt;a href="#start-minikube">#&lt;/a>
+start minikube
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;span class="lnt">24
+&lt;/span>&lt;span class="lnt">25
+&lt;/span>&lt;span class="lnt">26
+&lt;/span>&lt;span class="lnt">27
+&lt;/span>&lt;span class="lnt">28
+&lt;/span>&lt;span class="lnt">29
+&lt;/span>&lt;span class="lnt">30
+&lt;/span>&lt;span class="lnt">31
+&lt;/span>&lt;span class="lnt">32
+&lt;/span>&lt;span class="lnt">33
+&lt;/span>&lt;span class="lnt">34
+&lt;/span>&lt;span class="lnt">35
+&lt;/span>&lt;span class="lnt">36
+&lt;/span>&lt;span class="lnt">37
+&lt;/span>&lt;span class="lnt">38
+&lt;/span>&lt;span class="lnt">39
+&lt;/span>&lt;span class="lnt">40
+&lt;/span>&lt;span class="lnt">41
+&lt;/span>&lt;span class="lnt">42
+&lt;/span>&lt;span class="lnt">43
+&lt;/span>&lt;span class="lnt">44
+&lt;/span>&lt;span class="lnt">45
+&lt;/span>&lt;span class="lnt">46
+&lt;/span>&lt;span class="lnt">47
+&lt;/span>&lt;span class="lnt">48
+&lt;/span>&lt;span class="lnt">49
+&lt;/span>&lt;span class="lnt">50
+&lt;/span>&lt;span class="lnt">51
+&lt;/span>&lt;span class="lnt">52
+&lt;/span>&lt;span class="lnt">53
+&lt;/span>&lt;span class="lnt">54
+&lt;/span>&lt;span class="lnt">55
+&lt;/span>&lt;span class="lnt">56
+&lt;/span>&lt;span class="lnt">57
+&lt;/span>&lt;span class="lnt">58
+&lt;/span>&lt;span class="lnt">59
+&lt;/span>&lt;span class="lnt">60
+&lt;/span>&lt;span class="lnt">61
+&lt;/span>&lt;span class="lnt">62
+&lt;/span>&lt;span class="lnt">63
+&lt;/span>&lt;span class="lnt">64
+&lt;/span>&lt;span class="lnt">65
+&lt;/span>&lt;span class="lnt">66
+&lt;/span>&lt;span class="lnt">67
+&lt;/span>&lt;span class="lnt">68
+&lt;/span>&lt;span class="lnt">69
+&lt;/span>&lt;span class="lnt">70
+&lt;/span>&lt;span class="lnt">71
+&lt;/span>&lt;span class="lnt">72
+&lt;/span>&lt;span class="lnt">73
+&lt;/span>&lt;span class="lnt">74
+&lt;/span>&lt;span class="lnt">75
+&lt;/span>&lt;span class="lnt">76
+&lt;/span>&lt;span class="lnt">77
+&lt;/span>&lt;span class="lnt">78
+&lt;/span>&lt;span class="lnt">79
+&lt;/span>&lt;span class="lnt">80
+&lt;/span>&lt;span class="lnt">81
+&lt;/span>&lt;span class="lnt">82
+&lt;/span>&lt;span class="lnt">83
+&lt;/span>&lt;span class="lnt">84
+&lt;/span>&lt;span class="lnt">85
+&lt;/span>&lt;span class="lnt">86
+&lt;/span>&lt;span class="lnt">87
+&lt;/span>&lt;span class="lnt">88
+&lt;/span>&lt;span class="lnt">89
+&lt;/span>&lt;span class="lnt">90
+&lt;/span>&lt;span class="lnt">91
+&lt;/span>&lt;span class="lnt">92
+&lt;/span>&lt;span class="lnt">93
+&lt;/span>&lt;span class="lnt">94
+&lt;/span>&lt;span class="lnt">95
+&lt;/span>&lt;span class="lnt">96
+&lt;/span>&lt;span class="lnt">97
+&lt;/span>&lt;span class="lnt">98
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="cp">#!/bin/bash
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="cp">&lt;/span>&lt;span class="c1">#&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># start-minikube.sh&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Copyright (C) 2019 liugang.zlg &amp;lt;liugang.zlg@antfin.com&amp;gt;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">#&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># minikube start script&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1">#&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># check parameter&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">if&lt;/span> &lt;span class="o">[&lt;/span> &lt;span class="nv">$#&lt;/span> -ne &lt;span class="m">1&lt;/span> &lt;span class="o">]&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="k">then&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">echo&lt;/span> &lt;span class="s2">&amp;#34;Usage: &lt;/span>&lt;span class="nv">$0&lt;/span>&lt;span class="s2"> BUILD_ID&amp;#34;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">exit&lt;/span> &lt;span class="m">1&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">fi&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># constants&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">MINIKUBE_CACHE_DIR&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="nv">$HOME&lt;/span>/.minikube/cache
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">CURRENT_CONTEXT&lt;/span>&lt;span class="o">=&lt;/span>minikube-&lt;span class="nv">$1&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">WORKING_DIR&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="sb">`&lt;/span>&lt;span class="nb">pwd&lt;/span>&lt;span class="sb">`&lt;/span>/target/&lt;span class="nv">$CURRENT_CONTEXT&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">CURRENT_DRIVER&lt;/span>&lt;span class="o">=&lt;/span>kvm2
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">KUBERNETES_VERSION&lt;/span>&lt;span class="o">=&lt;/span>v1.12.4
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">REGISTRY_MIRROR&lt;/span>&lt;span class="o">=&lt;/span>https://uzs7j6l5.mirror.aliyuncs.com
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># setup working dirctory&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">function&lt;/span> setUpDir &lt;span class="o">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> mkdir -p &lt;span class="nv">$WORKING_DIR&lt;/span>/.kube &lt;span class="nv">$WORKING_DIR&lt;/span>/.minikube/cache/iso
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># cache&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> cp -rf &lt;span class="nv">$MINIKUBE_CACHE_DIR&lt;/span>/&lt;span class="nv">$KUBERNETES_VERSION&lt;/span> &lt;span class="nv">$WORKING_DIR&lt;/span>/.minikube/cache/
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># cp $MINIKUBE_CACHE_DIR/iso/minikube-`minikube version|awk &amp;#39;{print $NF}&amp;#39;`.iso $WORKING_DIR/.minikube/cache/iso/&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># create minikube&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">function&lt;/span> setUpMiniKube&lt;span class="o">()&lt;/span> &lt;span class="o">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">export&lt;/span> &lt;span class="nv">KUBECONFIG&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="nv">$WORKING_DIR&lt;/span>/.kube/config
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">export&lt;/span> &lt;span class="nv">MINIKUBE_HOME&lt;/span>&lt;span class="o">=&lt;/span>&lt;span class="nv">$WORKING_DIR&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># config cache&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> minikube config &lt;span class="nb">set&lt;/span> cache &lt;span class="s1">&amp;#39;istio/proxyv2:1.1.0-snapshot.4,ubuntu:xenial,istionightly/base_debug:latest,prom/prometheus:v2.3.1&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># 启动 minikube&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># --registry-mirror: docker.io 在国内访问困难，我们给 docker daemon 指定一个镜像&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># --kubernetes-version: minikube 支持的 k8s 版本非常丰富，可使用命令 minikube get-k8s-versions 获取所有支持的版本&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># --profile: 这个参数非常重要，正是它支撑一台宿主机起多个 minikube实例&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># --vm-driver: 指定虚拟机 driver&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># --bootstrapper: 官方推荐使用 kubeadm 启动 k8s&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> minikube start --memory&lt;span class="o">=&lt;/span>&lt;span class="m">8192&lt;/span> --cpus&lt;span class="o">=&lt;/span>&lt;span class="m">4&lt;/span> --disk-size&lt;span class="o">=&lt;/span>30g &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --registry-mirror&lt;span class="o">=&lt;/span>&lt;span class="nv">$REGISTRY_MIRROR&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --kubernetes-version&lt;span class="o">=&lt;/span>&lt;span class="nv">$KUBERNETES_VERSION&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --profile&lt;span class="o">=&lt;/span>&lt;span class="nv">$CURRENT_CONTEXT&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --vm-driver&lt;span class="o">=&lt;/span>&lt;span class="nv">$CURRENT_DRIVER&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --bootstrapper&lt;span class="o">=&lt;/span>kubeadm &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --docker-opt &lt;span class="s2">&amp;#34;bip=192.168.4.1/24&amp;#34;&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --iso-url &lt;span class="s2">&amp;#34;file://&lt;/span>&lt;span class="nv">$MINIKUBE_CACHE_DIR&lt;/span>&lt;span class="s2">/iso/minikube-`minikube version|awk &amp;#39;{print &lt;/span>&lt;span class="nv">$NF&lt;/span>&lt;span class="s2">}&amp;#39;`.iso&amp;#34;&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> -v &lt;span class="m">5&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># --cache-images \&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> minikube profile &lt;span class="nv">$CURRENT_CONTEXT&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># 实践中发现 k8s 集群有时候会设置 master node 不允许调度，我们把污点去除&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="c1"># kubectl taint nodes --all node-role.kubernetes.io/master-&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># print minikube info&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">function&lt;/span> echoMiniKube&lt;span class="o">()&lt;/span> &lt;span class="o">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">echo&lt;/span> &lt;span class="s1">&amp;#39;minikube ip&amp;#39;&lt;/span>:&lt;span class="sb">`&lt;/span>minikube ip&lt;span class="sb">`&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">echo&lt;/span> &lt;span class="s1">&amp;#39;minikube status:&amp;#39;&lt;/span>&lt;span class="sb">`&lt;/span>minikube status&lt;span class="sb">`&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">echo&lt;/span> &lt;span class="s1">&amp;#39;minikube config get profile:&amp;#39;&lt;/span>&lt;span class="sb">`&lt;/span>minikube config get profile&lt;span class="sb">`&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">echo&lt;/span> &lt;span class="s1">&amp;#39;which kubectl:&amp;#39;&lt;/span>&lt;span class="sb">`&lt;/span>which kubectl&lt;span class="sb">`&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">echo&lt;/span> &lt;span class="s1">&amp;#39;kubectl cluster-info:&amp;#39;&lt;/span>&lt;span class="sb">`&lt;/span>kubectl cluster-info&lt;span class="sb">`&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># setup minikube environment&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">function&lt;/span> setUpEnv&lt;span class="o">()&lt;/span> &lt;span class="o">{&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> cat &amp;gt; &lt;span class="nv">$WORKING_DIR&lt;/span>/minikube-env &lt;span class="s">&amp;lt;&amp;lt; EOF
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">export MINIKUBE_HOME=&amp;#34;$WORKING_DIR&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">export KUBECONFIG=&amp;#34;$WORKING_DIR/.kube/config&amp;#34;
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">eval \$(minikube docker-env)
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">source &amp;lt;(kubectl completion bash)
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="s">EOF&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">source&lt;/span> &lt;span class="nv">$WORKING_DIR&lt;/span>/minikube-env
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="o">}&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">setUpDir
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">setUpMiniKube
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">echoMiniKube
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">setUpEnv
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">for&lt;/span> i in &lt;span class="o">{&lt;/span>1..150&lt;span class="o">}&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="k">do&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> kubectl get po &lt;span class="p">&amp;amp;&lt;/span>&amp;gt; /dev/null
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">if&lt;/span> &lt;span class="o">[&lt;/span> &lt;span class="nv">$?&lt;/span> -ne &lt;span class="m">1&lt;/span> &lt;span class="o">]&lt;/span>&lt;span class="p">;&lt;/span> &lt;span class="k">then&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="nb">break&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="k">fi&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> sleep &lt;span class="m">2&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="k">done&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div></description></item><item><title>talk about kubernetes</title><link>https://blog.elmle.cn/posts/talk-about-kubernetes/</link><pubDate>Fri, 25 Jan 2019 11:00:00 +0000</pubDate><guid>https://blog.elmle.cn/posts/talk-about-kubernetes/</guid><description>&lt;p>Kubernetes 近几年很热门，在各大技术论坛上被炒的很火。它提供了强大的容器编排能力，与此同时 DevOps 的概念也来到大家身边，它模糊了开发和运维之间的边界，让大家更容易的从开发到运维一个大型的分布式系统。
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/63d17911492f6663d6430bb79375924d.png"
+width="900"
+height="431"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/63d17911492f6663d6430bb79375924d_hu15296541e29d7f08da1453e6875eb4ac_50231_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/63d17911492f6663d6430bb79375924d_hu15296541e29d7f08da1453e6875eb4ac_50231_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="!Center"
+class="gallery-image"
+data-flex-grow="208"
+data-flex-basis="501px"
+>
+本文会以初学者的视角，希望能让读者更好地理解 Kubernetes 出现的背景、技术架构和设计理念，其中会涉及到部分实现原理。&lt;/p>
+&lt;h1 id="背景">
+&lt;a href="#%e8%83%8c%e6%99%af">#&lt;/a>
+背景
+&lt;/h1>&lt;hr>
+&lt;h2 id="docker">
+&lt;a href="#docker">#&lt;/a>
+Docker
+&lt;/h2>&lt;p>Docker 是一个开源的应用容器引擎，让开发者可以打包他们的应用以及依赖包到一个可移植的容器中，然后发布到任何流行的 Linux 机器上，也可以实现虚拟化，Docker 的实现主要依赖于 Linux 的 namespace、cgroups 和 UnionFS。
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/23276458b2b122fee8d992647b9c9b4a.png"
+width="849"
+height="199"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/23276458b2b122fee8d992647b9c9b4a_hu178c00c3f75ae27dc77cef4ab533be91_117487_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/23276458b2b122fee8d992647b9c9b4a_hu178c00c3f75ae27dc77cef4ab533be91_117487_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="Center"
+class="gallery-image"
+data-flex-grow="426"
+data-flex-basis="1023px"
+>
+Docker 容器是完全使用沙箱机制，相互之间不会有任何接口。通过 Docker，实现进程、网络、挂载点和文件隔离，更好地利用宿主机资源。Docker 的强大到不需要关心宿主机的依赖，所有的一切都可以在镜像构建时完成，这也是 Docker 目前成为容器技术标准的原因。所以我们能看到在 Kubernetes 中 使用 Docker 作为容器（也支持 rkt）。&lt;/p>
+&lt;h2 id="微服务">
+&lt;a href="#%e5%be%ae%e6%9c%8d%e5%8a%a1">#&lt;/a>
+微服务
+&lt;/h2>&lt;p>随着软件的规模越来越大，业务模式越来越复杂，用户量的上升、地区的分布、系统性能的苛刻要求促成服务架构的从单体变成 SOA 再到如今的微服务，未来还可能演变为 Service Mesh ，Serverless等等。
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/47c8f1e1d2b175c2aa1128268d38d80b.png"
+width="1324"
+height="574"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/47c8f1e1d2b175c2aa1128268d38d80b_hud6a18ecf52706326135bdc1d15e7153b_697987_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/47c8f1e1d2b175c2aa1128268d38d80b_hud6a18ecf52706326135bdc1d15e7153b_697987_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="Center"
+class="gallery-image"
+data-flex-grow="230"
+data-flex-basis="553px"
+>
+如今，一个完整的后端系统不再是单体应用架构了，伴随着多年前的 DDD 概念重新回到大家的视线中。现在的系统被不同的职责和功能被拆成多个服务，服务之间复杂的关系以及单机的单点性能瓶颈让部署和运维变得很复杂，所以部署和运维大型分布式系统的需求急迫待解决。&lt;/p>
+&lt;h2 id="kubernetes">
+&lt;a href="#kubernetes">#&lt;/a>
+Kubernetes
+&lt;/h2>&lt;p>铺垫了这么多，终于说到本文的主角了。说 Kubernetes 之前，不得不提 Compose 和 Swarm，其实在 Kubernetes 还未一统江湖之前，这两个已经能实现大部分容器编排的能力了。但是在真正的大型系统上，它们却远远不如 Kubernetes。
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/04ad8d9ae828c06177c17d0cb8e3403e.png"
+width="260"
+height="170"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/04ad8d9ae828c06177c17d0cb8e3403e_hua1112b74cd954ccad90d06bc52545349_9248_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/04ad8d9ae828c06177c17d0cb8e3403e_hua1112b74cd954ccad90d06bc52545349_9248_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="152"
+data-flex-basis="367px"
+>
+在容器化和微服务时代，服务越来越多，容器个数也越来越多。Docker 如它 Logo 所示一样，一只只鲸鱼在大海里自由地游荡，而 Kubernetes 就像一个掌舵的船长，带着它们，有序的管理它们，这个过程其实就是容器编排。&lt;/p>
+&lt;p>Kubernetes 起源于 Google，很多设计都是源自于 Borg，是一个开源的，用于管理云平台中多个主机上的容器化的应用，Kubernetes 的目标是让部署容器化的应用简单并且高效，并且提供了应用部署，规划，更新，维护的一种机制。&lt;/p>
+&lt;h2 id="小结">
+&lt;a href="#%e5%b0%8f%e7%bb%93">#&lt;/a>
+小结
+&lt;/h2>&lt;p>至此，读者了解了 Kubernetes 的前世今生，它的出现使 DevOps 更加火热，普通的开发工程师也能做很多运维操作了。&lt;/p>
+&lt;h1 id="设计理念">
+&lt;a href="#%e8%ae%be%e8%ae%a1%e7%90%86%e5%bf%b5">#&lt;/a>
+设计理念
+&lt;/h1>&lt;p>这一部分，我们会围绕 Kubernetes 的四个设计理念看看这些做法能给我们带来什么。&lt;/p>
+&lt;h2 id="申明式vs命令式">
+&lt;a href="#%e7%94%b3%e6%98%8e%e5%bc%8fvs%e5%91%bd%e4%bb%a4%e5%bc%8f">#&lt;/a>
+申明式VS命令式
+&lt;/h2>&lt;p>声明式和命令式是截然不同的两种编程方式，在命令式 API 中，我们可以直接发出服务器要执行的命令，例如： “运行容器”、“停止容器”等；在声明式 API 中，我们声明系统要执行的操作，系统将不断向该状态驱动。&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/54a06e23d807ee8002e1f7d8eb2dedd3.png"
+width="540"
+height="291"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/54a06e23d807ee8002e1f7d8eb2dedd3_hu0f7ca2b1c8f0749e6585b9aa827672c9_29972_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/54a06e23d807ee8002e1f7d8eb2dedd3_hu0f7ca2b1c8f0749e6585b9aa827672c9_29972_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="185"
+data-flex-basis="445px"
+>
+我们常用的 SQL 就是一种声明式语言，告诉数据库想要的结果集，数据库会帮我们设计获取这个结果集的执行路径，并返回结果集。众所周知，使用 SQL 语言获取数据，要比自行编写处理过程去获取数据容易的多。&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-Yaml" data-lang="Yaml">&lt;span class="line">&lt;span class="cl">&lt;span class="nt">apiVersion&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">extensions/v1beta1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">kind&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">Deployment&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">metadata&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">etcd-operator&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w">&lt;/span>&lt;span class="nt">spec&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">replicas&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="m">1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">template&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">metadata&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">labels&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">etcd-operator&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">spec&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">containers&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">etcd-operator&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">image&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">quay.io/coreos/etcd-operator:v0.2.1&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">env&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">MY_POD_NAMESPACE&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">valueFrom&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">fieldRef&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">fieldPath&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">metadata.namespace&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>- &lt;span class="nt">name&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">MY_POD_NAME&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">valueFrom&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">fieldRef&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="w"> &lt;/span>&lt;span class="nt">fieldPath&lt;/span>&lt;span class="p">:&lt;/span>&lt;span class="w"> &lt;/span>&lt;span class="l">metadata.name&lt;/span>&lt;span class="w">
+&lt;/span>&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;p>我们来看看相同设计的 YAML，利用它，我们可以告诉 Kubernetes 最终想要的是什么，然后 Kubernetes 会完成目标。&lt;/p>
+&lt;p>声明式 API 使系统更加健壮，在分布式系统中，任何组件都可能随时出现故障。当组件恢复时，需要弄清楚要做什么，使用命令式 API 时，处理起来就很棘手。但是使用声明式 API ，组件只需查看 API 服务器的当前状态，即可确定它需要执行的操作。&lt;/p>
+&lt;h2 id="显示的api">
+&lt;a href="#%e6%98%be%e7%a4%ba%e7%9a%84api">#&lt;/a>
+显示的API
+&lt;/h2>&lt;p>Kubernetes 是透明的，它没有隐藏的内部 API。换句话说 Kubernetes 系统内部用来交互的 API 和我们用来与 Kubernetes 交互的 API 相同。&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/380f507ad6aadd16649f230786054014.png"
+width="1638"
+height="798"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/380f507ad6aadd16649f230786054014_huac88f75c701d8afa5c064ab178ee8311_130073_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/380f507ad6aadd16649f230786054014_huac88f75c701d8afa5c064ab178ee8311_130073_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="|Center"
+class="gallery-image"
+data-flex-grow="205"
+data-flex-basis="492px"
+>
+这样做的好处是，当 Kubernetes 默认的组件无法满足我们的需求时，我们可以利用已有的 API 实现我们自定义的特性。&lt;/p>
+&lt;h2 id="无侵入性">
+&lt;a href="#%e6%97%a0%e4%be%b5%e5%85%a5%e6%80%a7">#&lt;/a>
+无侵入性
+&lt;/h2>&lt;p>感谢 Docker 容器技术的流行，使得 Kubernetes 为大家提供了无缝的使用方式。在容器化的时代，我们的应用达到镜像后，不需要改动就可以遨游在 Kubernetes 集群中。&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/66fd02808d707f959c78782fcd3decf6.png"
+width="650"
+height="530"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/66fd02808d707f959c78782fcd3decf6_hu03ee812fa474419fb851478b210bf659_97931_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/66fd02808d707f959c78782fcd3decf6_hu03ee812fa474419fb851478b210bf659_97931_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="122"
+data-flex-basis="294px"
+>
+Kubernetes 还提供存储 Secret、Configuration 等包含但不局限于密码、证书、容器镜像信息、应用启动参数能力。如此，Kubernetes 以一种友好的方式将这些东西注入 Pod，减少了大家的工作量，而无需重写或者很大幅度改变原有的应用代码。&lt;/p>
+&lt;h2 id="有状态的移植">
+&lt;a href="#%e6%9c%89%e7%8a%b6%e6%80%81%e7%9a%84%e7%a7%bb%e6%a4%8d">#&lt;/a>
+有状态的移植
+&lt;/h2>&lt;p>在有状态的存储场景下，Kubernetes 如何做到对于服务和存储的分离呢？假设一个大型分布式系统使用了多家云厂商的存储方案，如何做到开发者无感于底层的存储技术体系，并且做到方便的移植？&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/32ca12fa44593a2b5907f1bcc289cfb5.png"
+width="859"
+height="434"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/32ca12fa44593a2b5907f1bcc289cfb5_hu93ec51a13c3e6005ce18cc641e59b263_37318_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/32ca12fa44593a2b5907f1bcc289cfb5_hu93ec51a13c3e6005ce18cc641e59b263_37318_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="|Center"
+class="gallery-image"
+data-flex-grow="197"
+data-flex-basis="475px"
+>
+为了实现这一目标，Kubernetes 引入了 PersistentVolumeClaim（PVC）和 PersistentVolume（PV）API 对象。这些对象将存储实现与存储使用分离。&lt;/p>
+&lt;p>PersistentVolumeClaim 对象用作用户以与实现无关的方式请求存储的方法，通过它来抹除对底层 PersistentVolume 的差异性。这样就使 Kubernetes 拥有了跨集群的移植能力。&lt;/p>
+&lt;h1 id="架构">
+&lt;a href="#%e6%9e%b6%e6%9e%84">#&lt;/a>
+架构
+&lt;/h1>&lt;p>首先要提及的是 Kubernetes 使用很具代表性的 C/S 架构方式，Client 可以使用 kubectl 命令行或者 RESTful 接口与 Kubernetes 集群进行交互。下面这张图是从宏观上看 Kubernetes 的整体架构，每一个 Kubernetes 集群都由 Master 节点 和 很多的 Node 节点组成。
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/d557ade0b967dd60040d459d9c443c05.png"
+width="1858"
+height="1126"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/d557ade0b967dd60040d459d9c443c05_hu9efe30128b226a9b9b95be70f73f29c0_759222_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/d557ade0b967dd60040d459d9c443c05_hu9efe30128b226a9b9b95be70f73f29c0_759222_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="|Center"
+class="gallery-image"
+data-flex-grow="165"
+data-flex-basis="396px"
+>&lt;/p>
+&lt;h2 id="master">
+&lt;a href="#master">#&lt;/a>
+Master
+&lt;/h2>&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/dda50cef366f90eeb2cd09d9ec6c2371.png"
+width="1600"
+height="1067"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/dda50cef366f90eeb2cd09d9ec6c2371_hu612b5222a5ffa5504ac4f4f64e0cb81b_84266_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/dda50cef366f90eeb2cd09d9ec6c2371_hu612b5222a5ffa5504ac4f4f64e0cb81b_84266_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="149"
+data-flex-basis="359px"
+>
+Master 是 Kubernetes 集群的管理节点，负责管理集群，提供集群的资源数据访问入口。拥有 Etcd 存储服务，运行 API Server 进程，Controller Manager 服务进程及 Scheduler 服务进程，关联工作节点 Node。&lt;/p>
+&lt;p>Kubernetes API Server 提供 HTTP Rest 接口的关键服务进程，是Kubernetes里所有资源的增、删、改、查等操作的唯一入口。也是集群控制的入口进程；
+Kubernetes Controller Manager 是 Kubernetes 所有资源对象的自动化控制中心，它驱使集群向着我们所需要的最终目的状态；
+Kubernetes Schedule是 负责 Pod 调度的进程。&lt;/p>
+&lt;h2 id="node">
+&lt;a href="#node">#&lt;/a>
+Node
+&lt;/h2>&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/05f3ba08afd94c864c229039b3711248.png"
+width="1600"
+height="1067"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/05f3ba08afd94c864c229039b3711248_hu612b5222a5ffa5504ac4f4f64e0cb81b_97013_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/05f3ba08afd94c864c229039b3711248_hu612b5222a5ffa5504ac4f4f64e0cb81b_97013_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="149"
+data-flex-basis="359px"
+>
+Node 是 Kubernetes 集群架构中运行 Pod 的服务节点。Node 是 Kubernetes 集群操作的单元，用来承载被分配 Pod 的运行，是 Pod 运行的宿主机。关联 Master 管理节点，拥有名称和 IP、系统资源信息。运行 Docker Runtime、kubelet 和 kube-proxy。&lt;/p>
+&lt;p>kubelet 负责对Pod对于的容器的创建、启停等任务，发送宿主机当前状态；
+kube-proxy 实现 Kubernetes Service 的通信与负载均衡机制的重要组件；
+Docker Runtime 负责本机容器的创建和管理工作。&lt;/p>
+&lt;h1 id="实现原理">
+&lt;a href="#%e5%ae%9e%e7%8e%b0%e5%8e%9f%e7%90%86">#&lt;/a>
+实现原理
+&lt;/h1>&lt;p>为了尽可能的让读者能明白 Kubernetes 是如何运作的，这里不会涉及到具体的细节实现，如有读者感兴趣可以自行参阅官网文档。这里以一个简单的应用部署示例来阐述一些概念和原理。&lt;/p>
+&lt;h2 id="创建-kubernetes-集群">
+&lt;a href="#%e5%88%9b%e5%bb%ba-kubernetes-%e9%9b%86%e7%be%a4">#&lt;/a>
+创建 Kubernetes 集群
+&lt;/h2>&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/1fc655d24340f8b82234ccdb662f5c9e.png"
+width="998"
+height="756"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/1fc655d24340f8b82234ccdb662f5c9e_hu00253a23c3444b4652e4ab00db0086a2_161523_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/1fc655d24340f8b82234ccdb662f5c9e_hu00253a23c3444b4652e4ab00db0086a2_161523_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+alt="|Center"
+class="gallery-image"
+data-flex-grow="132"
+data-flex-basis="316px"
+>
+介绍架构的时候我们知道，Kubernetes 集群由 Master 和 Node 组成。&lt;/p>
+&lt;p>Master 管理集群的所有行为例如：应用调度、改变应用的状态，扩缩容，更新/降级应用等。&lt;/p>
+&lt;p>Node 可以是是一个虚拟机或者物理机，它是应用的“逻辑主机”，每一个 Node 拥有一个 Kubelet，Kubelet 负责管理 Node 节点与 Master 节点的交互，同时 Node 还需要有容器操作的能力，比如 Docker 或者 rkt。理论上来说，一个 Kubernetes 为了应对生产环境的流量，最少部署3个 Node 节点。&lt;/p>
+&lt;p>当我们需要在 Kubernetes 上部署应用时，我们告诉 Master 节点，Master 会调度容器跑在合适的 Node 节点上。&lt;/p>
+&lt;p>我们可以使用 Minikube 在本地搭一个单 Node 的 Kubernetes 集群。&lt;/p>
+&lt;h2 id="部署应用">
+&lt;a href="#%e9%83%a8%e7%bd%b2%e5%ba%94%e7%94%a8">#&lt;/a>
+部署应用
+&lt;/h2>&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/09ec3314ca193a0bf81f847c81b0c46a.png"
+width="1028"
+height="764"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/09ec3314ca193a0bf81f847c81b0c46a_hu20b2d548ef3f036c1093203666470f56_178367_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/09ec3314ca193a0bf81f847c81b0c46a_hu20b2d548ef3f036c1093203666470f56_178367_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="134"
+data-flex-basis="322px"
+>
+当创建好一个 Kubernetes 集群后，就可以把容器化的应用跑在上面了。我们需要创建一个 Deployment，它会告诉 Kubernetes Master 如何去创建应用，也可以来更新应用。&lt;/p>
+&lt;p>当应用实例创建后，Deployment 会不断的观察这些实例，如果 Node 上的 Pod 挂了，Deployment 会自动创建新的实例并且替换它。相比传统脚本运维的方式，这种方式更加优雅。&lt;/p>
+&lt;p>我们能通过 kubectl 命令或者 YAML 文件来创建 Deployment，在创建的时候需要指定应用镜像和要跑的实例个数，之后 Kubernetes 会自动帮我们处理。&lt;/p>
+&lt;h2 id="查看pods-和-nodes">
+&lt;a href="#%e6%9f%a5%e7%9c%8bpods-%e5%92%8c-nodes">#&lt;/a>
+查看Pods 和 Nodes
+&lt;/h2>&lt;p>下面来介绍下 Pod 和 Node：
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/99a2ea45046cb9f78b065e31e28b7563.png"
+width="1268"
+height="484"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/99a2ea45046cb9f78b065e31e28b7563_hudf8f88e0419980a4f29157c5d29d5ccc_110057_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/99a2ea45046cb9f78b065e31e28b7563_hudf8f88e0419980a4f29157c5d29d5ccc_110057_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="261"
+data-flex-basis="628px"
+>
+当我们创建好 Deployment 的时候，Kubernetes 会自动创建 Pod 来承载应用实例。Pod 是一个抽象的概念，像一个“逻辑主机”，它代表一组应用容器的集合，这些应用容器共享资源，包括存储，网络和相同的内部集群 IP。&lt;/p>
+&lt;p>&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/ef3a0b122575286ed2b6c1a89611b05a.png"
+width="1096"
+height="932"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/ef3a0b122575286ed2b6c1a89611b05a_hu7365a734c2927fabd7316ebd938e834e_163286_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/ef3a0b122575286ed2b6c1a89611b05a_hu7365a734c2927fabd7316ebd938e834e_163286_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="117"
+data-flex-basis="282px"
+>
+任何一个 Pod 都需要跑在一个 Node 节点上。Node 是一个“虚拟机器”，它可以是虚拟机也可以是物理机，一个 Node 可以有多个 Pods，Kubernetes 会自动调度 Pod 到合适的 Node 上。&lt;/p>
+&lt;h2 id="service-与-labelselector">
+&lt;a href="#service-%e4%b8%8e-labelselector">#&lt;/a>
+Service 与 LabelSelector
+&lt;/h2>&lt;p>Pods 终有一死，也就是说 Pods 也有自己的生命周期，当一个 Pod 挂了的时候，ReplicaSet 会创建新的，并且调度到合适的 Node 节点上。考虑下访问的问题，Pod 替换伴随着 IP 的变化，对于访问者来说，变化的 IP 是合理的；并且当有多个 Pod 节点时，如何 SLB 访问也是个问题，Service 就是为了解决这些问题的。
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/7cd5ab174d094e163a41a5edbab7cd70.png"
+width="1176"
+height="1076"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/7cd5ab174d094e163a41a5edbab7cd70_huee4c8d5eeb689ad5c70a71ad589f78af_188452_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/7cd5ab174d094e163a41a5edbab7cd70_huee4c8d5eeb689ad5c70a71ad589f78af_188452_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="109"
+data-flex-basis="262px"
+>&lt;/p>
+&lt;p>Service 是一个抽象的概念，它定义了一组逻辑 Pods，并且提供访问它们的策略。和其他对象一样，Service 也能通过 kubectl 或者 YAML 创建。Service 定义的 Pod 可以写在 LabelSelector 选项中（下文会介绍），也存在不指定 Pods 的情况，这种比较复杂，感兴趣的读者可以自行查阅资料。&lt;/p>
+&lt;p>Service 有以下几种类型：&lt;/p>
+&lt;ul>
+&lt;li>ClusterIP（默认）：在集群中内部IP上暴露服务，此类型使Service只能从群集中访问；&lt;/li>
+&lt;li>NodePort：通过每个 Node 上的 IP 和静态端口（NodePort）暴露服务。NodePort 服务会路由到 ClusterIP 服务，这个 ClusterIP 服务会自动创建。通过请求 :，可以从集群的外部访问一个 NodePort 服务；&lt;/li>
+&lt;li>LoadBalancer：使用云提供商的负载均衡器，可以向外部暴露服务。外部的负载均衡器可以路由到 NodePort 服务和 ClusterIP 服务；&lt;/li>
+&lt;li>ExternalName：通过返回 CNAME 和它的值，（适用于外部 DNS 的场景）
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/6a96452d6cd2670674bd774d34a5080d.png"
+width="1064"
+height="1052"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/6a96452d6cd2670674bd774d34a5080d_hubdb7138ea5879e8c979a87cb720c6338_196447_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/6a96452d6cd2670674bd774d34a5080d_hubdb7138ea5879e8c979a87cb720c6338_196447_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="101"
+data-flex-basis="242px"
+>&lt;/li>
+&lt;/ul>
+&lt;p>Labels 和 Selectors 能够让 Kubernetes 拥有逻辑运算的能力，有点像 SQL。举个例子：可以查找 app=hello_word 的所有对象，也可以查找 app in (a,b,c) abc的所有对象。&lt;/p>
+&lt;p>Labels是一个绑定在对象上的 K/V 结构，它可以在创建或者之后的时候的定义，在任何时候都可以改变。&lt;/p>
+&lt;h2 id="应用扩用">
+&lt;a href="#%e5%ba%94%e7%94%a8%e6%89%a9%e7%94%a8">#&lt;/a>
+应用扩用
+&lt;/h2>&lt;p>前文提到我们可以使用 Deployment 增加实例个数，下图是原始的集群状态：
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/30662524be0c59492d3a20af6e7fa111.png"
+width="996"
+height="904"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/30662524be0c59492d3a20af6e7fa111_huc3c94e4dc1fa62e1a0a8a92267c682f5_90027_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/30662524be0c59492d3a20af6e7fa111_huc3c94e4dc1fa62e1a0a8a92267c682f5_90027_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="110"
+data-flex-basis="264px"
+>
+我们可以随意的更改 replicas （实例个数）来扩容，当我们更改了 Deployment 中的 replicas 值时，Kubernetes 会自动帮我们达到想要的目标实例个数，如下图：
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/37cdf81ebe1663f74fe80567b6c6effc.png"
+width="966"
+height="882"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/37cdf81ebe1663f74fe80567b6c6effc_hu6502f86c4fa40d28d86ee8c6a3227dc5_118220_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/37cdf81ebe1663f74fe80567b6c6effc_hu6502f86c4fa40d28d86ee8c6a3227dc5_118220_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="109"
+data-flex-basis="262px"
+>&lt;/p>
+&lt;h2 id="更新应用">
+&lt;a href="#%e6%9b%b4%e6%96%b0%e5%ba%94%e7%94%a8">#&lt;/a>
+更新应用
+&lt;/h2>&lt;p>更新应用和扩容类似，我们可以更改 Deployment 中的容器镜像，然后 Kubernetes 会帮住我们应用更新（蓝绿、金丝雀等方式），通过此功能，我们还可以实现切换应用环境、回滚、不停机CCD。下面是部署的过程，需要注意的是，我们可以指定新创建的 Pod 最大个数和不可用 Pod 最大个数：
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/2cf23e0bc1253e7c26930310101c12cb.png"
+width="914"
+height="898"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/2cf23e0bc1253e7c26930310101c12cb_hu2550f108d4584467901510516cf0cd97_117397_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/2cf23e0bc1253e7c26930310101c12cb_hu2550f108d4584467901510516cf0cd97_117397_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="101"
+data-flex-basis="244px"
+>
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/acacffc995f97439c0cb729ad3110758.png"
+width="1102"
+height="886"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/acacffc995f97439c0cb729ad3110758_hu29876da1df5676850b6f1c08d4cb83db_139408_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/acacffc995f97439c0cb729ad3110758_hu29876da1df5676850b6f1c08d4cb83db_139408_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="124"
+data-flex-basis="298px"
+>
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/caeb3f62ecadfbc9bdf80d5401c8497a.png"
+width="1082"
+height="900"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/caeb3f62ecadfbc9bdf80d5401c8497a_hu99d48f31215c6291b3469dd0fa6e6e24_131445_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/caeb3f62ecadfbc9bdf80d5401c8497a_hu99d48f31215c6291b3469dd0fa6e6e24_131445_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="120"
+data-flex-basis="288px"
+>
+&lt;img src="https://blog.elmle.cn/posts/talk-about-kubernetes/0e994b5fea1d82e79eab0e83f7fb2b4f.png"
+width="1126"
+height="882"
+srcset="https://blog.elmle.cn/posts/talk-about-kubernetes/0e994b5fea1d82e79eab0e83f7fb2b4f_hud5331a53709f90a126c524fde72286f1_131393_480x0_resize_box_3.png 480w, https://blog.elmle.cn/posts/talk-about-kubernetes/0e994b5fea1d82e79eab0e83f7fb2b4f_hud5331a53709f90a126c524fde72286f1_131393_1024x0_resize_box_3.png 1024w"
+loading="lazy"
+class="gallery-image"
+data-flex-grow="127"
+data-flex-basis="306px"
+>&lt;/p>
+&lt;h1 id="总结">
+&lt;a href="#%e6%80%bb%e7%bb%93">#&lt;/a>
+总结
+&lt;/h1>&lt;p>到了最后，大家对 Kubernetes 能有个大概的了解了，但 Kubernetes 远远不止本文所介绍的这些内容。&lt;/p></description></item><item><title>prepare a minikube environment</title><link>https://blog.elmle.cn/posts/minikube-env-preparatioin/</link><pubDate>Tue, 22 Jan 2019 15:00:00 +0000</pubDate><guid>https://blog.elmle.cn/posts/minikube-env-preparatioin/</guid><description>&lt;p>Prepare a environent with golang, docker-ce, minikube installed. We will begin develop istio in this environment.&lt;/p>
+&lt;h3 id="install-go-language">
+&lt;a href="#install-go-language">#&lt;/a>
+Install go language
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;span class="lnt">6
+&lt;/span>&lt;span class="lnt">7
+&lt;/span>&lt;span class="lnt">8
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># install older golang, because there must be go command during compile golang source code&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo yum install -y golang
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># get golang source&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">mkdir -p ~/git &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> git clone https://github.com/golang/go.git ~/git/go
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># compire source code&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nb">cd&lt;/span> ~/git/go/src&lt;span class="p">;&lt;/span> ./all.bash
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># remove older golang&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo yum remove -y golang
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="install-docker-ce">
+&lt;a href="#install-docker-ce">#&lt;/a>
+Install Docker-CE
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 1: add aliyun and docker-ce repository&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo wget -O /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo yum makecache
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 2: install docker-ce (we should set http(s)_proxy because of GFW)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo yum install -y docker-ce
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 3: start docker daemon&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo systemctl &lt;span class="nb">enable&lt;/span> docker &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> sudo systemctl start docker
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 4: add current user to docker group&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo usermod -a -G docker &lt;span class="k">$(&lt;/span>whoami&lt;span class="k">)&lt;/span> &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> newgrp docker
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># (Optional) Step 5: test docker&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">docker run hello-world
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="install-docker-machine">
+&lt;a href="#install-docker-machine">#&lt;/a>
+Install docker-machine
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="nv">base&lt;/span>&lt;span class="o">=&lt;/span>https://github.com/docker/machine/releases/download/v0.16.1 &lt;span class="o">&amp;amp;&amp;amp;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> curl -L &lt;span class="nv">$base&lt;/span>/docker-machine-&lt;span class="k">$(&lt;/span>uname -s&lt;span class="k">)&lt;/span>-&lt;span class="k">$(&lt;/span>uname -m&lt;span class="k">)&lt;/span> &amp;gt;/tmp/docker-machine &lt;span class="o">&amp;amp;&amp;amp;&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> sudo cp /tmp/docker-machine /usr/local/bin/docker-machine
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="install-virtualboxhttpswwwvirtualboxorgwikilinux_downloads">
+&lt;a href="#install-virtualboxhttpswwwvirtualboxorgwikilinux_downloads">#&lt;/a>
+Install VirtualBox(&lt;a class="link" href="https://www.virtualbox.org/wiki/Linux_Downloads" target="_blank" rel="noopener"
+>https://www.virtualbox.org/wiki/Linux_Downloads&lt;/a>)
+&lt;/h3>&lt;p>&lt;a class="link" href="https://wiki.centos.org/HowTos/Virtualization/VirtualBox" target="_blank" rel="noopener"
+>doc&lt;/a>&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 1: download virtualbox&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">curl -Lo VirtualBox-6.0-6.0.2_128162_el7-1.x86_64.rpm https://download.virtualbox.org/virtualbox/6.0.2/VirtualBox-6.0-6.0.2_128162_el7-1.x86_64.rpm
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 2: install virtualbox&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo yum install VirtualBox-6.0-6.0.2_128162_el7-1.x86_64.rpm
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 3: install vboxdrv kernel module&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo /usr/lib/virtualbox/vboxdrv.sh setup
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 3: test create a virtual machine&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">docker-machine create -d virtualbox --virtualbox-disk-size &lt;span class="s2">&amp;#34;100000&amp;#34;&lt;/span> large
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="install-kvm-driver">
+&lt;a href="#install-kvm-driver">#&lt;/a>
+Install kvm driver
+&lt;/h3>&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;span class="lnt">20
+&lt;/span>&lt;span class="lnt">21
+&lt;/span>&lt;span class="lnt">22
+&lt;/span>&lt;span class="lnt">23
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># CentOS environment &lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo yum install qemu-kvm qemu-img virt-manager libvirt libvirt-python libvirt-client virt-install virt-viewer bridge-utils libguestfs-tools
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo usermod -a -G libvirt &lt;span class="k">$(&lt;/span>whoami&lt;span class="k">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">newgrp libvirt
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Ubuntu 16.04&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo apt install qemu-kvm libvirt-bin
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo usermod -a -G libvirtd &lt;span class="k">$(&lt;/span>whoami&lt;span class="k">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">newgrp libvirtd
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># ubuntu 18.04&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo apt install libvirt-clients libvirt-daemon-system qemu-kvm
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">sudo usermod -a -G libvirt &lt;span class="k">$(&lt;/span>whoami&lt;span class="k">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">newgrp libvirt
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># kvm2 driver&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">curl -Lo docker-machine-driver-kvm2 https://storage.googleapis.com/minikube/releases/latest/docker-machine-driver-kvm2 &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span>&lt;span class="o">&amp;amp;&amp;amp;&lt;/span> chmod +x docker-machine-driver-kvm2 &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span>&lt;span class="o">&amp;amp;&amp;amp;&lt;/span> sudo cp docker-machine-driver-kvm2 /usr/local/bin/ &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span>&lt;span class="o">&amp;amp;&amp;amp;&lt;/span> rm docker-machine-driver-kvm2
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># list virtual machine&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">virsh list --all
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;h3 id="install-minikube">
+&lt;a href="#install-minikube">#&lt;/a>
+Install minikube
+&lt;/h3>&lt;p>We will install minikube in virturebox&lt;/p>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt"> 1
+&lt;/span>&lt;span class="lnt"> 2
+&lt;/span>&lt;span class="lnt"> 3
+&lt;/span>&lt;span class="lnt"> 4
+&lt;/span>&lt;span class="lnt"> 5
+&lt;/span>&lt;span class="lnt"> 6
+&lt;/span>&lt;span class="lnt"> 7
+&lt;/span>&lt;span class="lnt"> 8
+&lt;/span>&lt;span class="lnt"> 9
+&lt;/span>&lt;span class="lnt">10
+&lt;/span>&lt;span class="lnt">11
+&lt;/span>&lt;span class="lnt">12
+&lt;/span>&lt;span class="lnt">13
+&lt;/span>&lt;span class="lnt">14
+&lt;/span>&lt;span class="lnt">15
+&lt;/span>&lt;span class="lnt">16
+&lt;/span>&lt;span class="lnt">17
+&lt;/span>&lt;span class="lnt">18
+&lt;/span>&lt;span class="lnt">19
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 1: download minikube&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> chmod +x minikube &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> sudo cp minikube /usr/local/bin/ &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> rm minikube
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 2: download kubectl&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">curl -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/&lt;span class="k">$(&lt;/span>curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt&lt;span class="k">)&lt;/span>/bin/linux/amd64/kubectl &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> chmod +x kubectl &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> sudo cp kubectl /usr/local/bin/ &lt;span class="o">&amp;amp;&amp;amp;&lt;/span> rm kubectl
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="c1"># Step 3: start minikube&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">REGISTRY_MIRROR&lt;/span>&lt;span class="o">=&lt;/span>https://docker.mirrors.ustc.edu.cn
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">KUBERNETES_VERSION&lt;/span>&lt;span class="o">=&lt;/span>v1.12.4
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">CURRENT_CONTEXT&lt;/span>&lt;span class="o">=&lt;/span>minikube-&lt;span class="sb">`&lt;/span>date +%s&lt;span class="sb">`&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="nv">CURRENT_DRIVER&lt;/span>&lt;span class="o">=&lt;/span>kvm2
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">minikube start --memory&lt;span class="o">=&lt;/span>&lt;span class="m">8192&lt;/span> --cpus&lt;span class="o">=&lt;/span>&lt;span class="m">4&lt;/span> --disk-size&lt;span class="o">=&lt;/span>30g &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --registry-mirror&lt;span class="o">=&lt;/span>&lt;span class="nv">$REGISTRY_MIRROR&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --kubernetes-version&lt;span class="o">=&lt;/span>&lt;span class="nv">$KUBERNETES_VERSION&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --profile&lt;span class="o">=&lt;/span>&lt;span class="nv">$CURRENT_CONTEXT&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --vm-driver&lt;span class="o">=&lt;/span>&lt;span class="nv">$CURRENT_DRIVER&lt;/span> &lt;span class="se">\
+&lt;/span>&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">&lt;span class="se">&lt;/span> --bootstrapper&lt;span class="o">=&lt;/span>kubeadm
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">minikube profile &lt;span class="nv">$CURRENT_CONTEXT&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div></description></item><item><title>configuring a remote repository for a fork</title><link>https://blog.elmle.cn/posts/configuring-a-remote-repository-for-a-fork/</link><pubDate>Tue, 05 Jun 2018 19:11:54 +0000</pubDate><guid>https://blog.elmle.cn/posts/configuring-a-remote-repository-for-a-fork/</guid><description>&lt;p>You must configure a remote that points to the upstream repository in Git to sync changes
+you make in a fork with the original repository. This also allows you to sync changes made
+in the original repository with the fork.&lt;/p>
+&lt;ol>
+&lt;li>Open Terminal&lt;/li>
+&lt;li>List the current configured remote&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git remote -v
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">origin https://github.com/YOUR_USERNAME/YOUR_FOCK.git &lt;span class="o">(&lt;/span>fetch&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">origin https://github.com/YOUR_USERNAME/YOUR_FOCK.git &lt;span class="o">(&lt;/span>push&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ol start="3">
+&lt;li>Specify a new remote upstream repository that will be synced with the fork&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git remote add upstream https://github.com/ORIGINAL_OWNER/ORIGINAL_REPOSITORY.git
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ol start="4">
+&lt;li>Verify the new upstream repository you&amp;rsquo;ve specified for your fork&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git remote -v
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">origin https://github.com/YOUR_USERNAME/YOUR_FORK.git &lt;span class="o">(&lt;/span>fetch&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">origin https://github.com/YOUR_USERNAME/YOUR_FORK.git &lt;span class="o">(&lt;/span>push&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">upstream https://github.com/ORIGINAL_OWNER/ORIGINAL_REPOSITORY.git &lt;span class="o">(&lt;/span>fetch&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">upstream https://github.com/ORIGINAL_OWNER/ORIGINAL_REPOSITORY.git &lt;span class="o">(&lt;/span>push&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ol start="5">
+&lt;li>Fetch the branches and their respective commits from the upstream repository. Commits to &lt;strong>master&lt;/strong> will be stored in a local branch, &lt;strong>upstream/master&lt;/strong>&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;span class="lnt">6
+&lt;/span>&lt;span class="lnt">7
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git fetch upstream
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">remote: Counting objects: 75, &lt;span class="k">done&lt;/span>.
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">remote: Compressing objects: 100% &lt;span class="o">(&lt;/span>53/53&lt;span class="o">)&lt;/span>, &lt;span class="k">done&lt;/span>.
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">remote: Total &lt;span class="m">62&lt;/span> &lt;span class="o">(&lt;/span>delta 27&lt;span class="o">)&lt;/span>, reused &lt;span class="m">44&lt;/span> &lt;span class="o">(&lt;/span>delta 9&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">Unpacking objects: 100% &lt;span class="o">(&lt;/span>62/62&lt;span class="o">)&lt;/span>, &lt;span class="k">done&lt;/span>.
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">From https://github.com/ORIGINAL_OWNER/ORIGINAL_REPOSITORY
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> * &lt;span class="o">[&lt;/span>new branch&lt;span class="o">]&lt;/span> master -&amp;gt; upstream/master
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ol start="6">
+&lt;li>Check out your fork&amp;rsquo;s local &lt;strong>master&lt;/strong> branch&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git checkout master
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">Switched to branch &lt;span class="s1">&amp;#39;master&amp;#39;&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ol start="7">
+&lt;li>Merge the changes from upstream/master into your local master branch. This brings your fork&amp;rsquo;s master branch into sync with the upstream repository, without losing your local changes&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;span class="lnt">2
+&lt;/span>&lt;span class="lnt">3
+&lt;/span>&lt;span class="lnt">4
+&lt;/span>&lt;span class="lnt">5
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git merge upstream/master
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">Updating 34e91da..16c56ad
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl">Fast-forward
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> README.md &lt;span class="p">|&lt;/span> &lt;span class="m">5&lt;/span> +++--
+&lt;/span>&lt;/span>&lt;span class="line">&lt;span class="cl"> &lt;span class="m">1&lt;/span> file changed, &lt;span class="m">3&lt;/span> insertions&lt;span class="o">(&lt;/span>+&lt;span class="o">)&lt;/span>, &lt;span class="m">2&lt;/span> deletions&lt;span class="o">(&lt;/span>-&lt;span class="o">)&lt;/span>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;ol start="8">
+&lt;li>Push your changes&lt;/li>
+&lt;/ol>
+&lt;div class="highlight">&lt;div class="chroma">
+&lt;table class="lntable">&lt;tr>&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code>&lt;span class="lnt">1
+&lt;/span>&lt;/code>&lt;/pre>&lt;/td>
+&lt;td class="lntd">
+&lt;pre tabindex="0" class="chroma">&lt;code class="language-bash" data-lang="bash">&lt;span class="line">&lt;span class="cl">$ git push
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/td>&lt;/tr>&lt;/table>
+&lt;/div>
+&lt;/div>&lt;blockquote>
+&lt;p>&lt;a class="link" href="https://help.github.com/articles/configuring-a-remote-for-a-fork/" target="_blank" rel="noopener"
+>Configuring a remote for a fork&lt;/a>
+&lt;a class="link" href="https://help.github.com/articles/syncing-a-fork/" target="_blank" rel="noopener"
+>Syncing a fork&lt;/a>&lt;/p>
+&lt;/blockquote></description></item><item><title>gather and analyze packet traces for macOS</title><link>https://blog.elmle.cn/posts/gather-and-analyze-packet-traces-for-macos/</link><pubDate>Wed, 07 Jun 2017 15:03:20 +0000</pubDate><guid>https://blog.elmle.cn/posts/gather-and-analyze-packet-traces-for-macos/</guid><description>&lt;p>&lt;a class="link" href="https://developer.apple.com/library/content/qa/qa1176/_index.html" target="_blank" rel="noopener"
+>gather and analyze packet traces for macOS&lt;/a>&lt;/p></description></item><item><title>About</title><link>https://blog.elmle.cn/about/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://blog.elmle.cn/about/</guid><description>&lt;p>Welcome to my personal blog!&lt;/p>
+&lt;h2 id="who-am-i">
+&lt;a href="#who-am-i">#&lt;/a>
+Who am I?
+&lt;/h2>&lt;p>Hello, I&amp;rsquo;m elmer. Since I graduated from Harbin Institute of Technology (Shenzhen) at 2011, I have been worked at Tencent for 4 and half years.&lt;/p>
+&lt;h2 id="career-overview">
+&lt;a href="#career-overview">#&lt;/a>
+Career Overview
+&lt;/h2>&lt;h2 id="things-i-like">
+&lt;a href="#things-i-like">#&lt;/a>
+Things I like
+&lt;/h2>&lt;h2 id="how-to-contact">
+&lt;a href="#how-to-contact">#&lt;/a>
+How to contact?
+&lt;/h2>&lt;h2 id="faq">
+&lt;a href="#faq">#&lt;/a>
+FAQ
+&lt;/h2></description></item><item><title>Search</title><link>https://blog.elmle.cn/search/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://blog.elmle.cn/search/</guid><description/></item></channel></rss>
